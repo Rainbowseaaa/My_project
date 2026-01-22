@@ -1,0 +1,39 @@
+slm1:
+  screen_num: 1
+  bolduc_period: 8
+  compensation_path: ""
+  play_interval_ms: 500
+
+slm2:
+  compensation_path: ""
+  block_mode: "checkerboard"
+  outside_mode: "zero"
+  window_size_px: [400, 400]
+  default_centers:
+    - [480, 300]
+    - [960, 300]
+    - [480, 800]
+    - [960, 800]
+  layers:
+    - {path: "", dx: 0, dy: 0, enabled: true}
+    - {path: "", dx: 0, dy: 0, enabled: true}
+    - {path: "", dx: 0, dy: 0, enabled: true}
+    - {path: "", dx: 0, dy: 0, enabled: true}
+  mat_key: "phase"
+
+camera:
+  device_sn: ""
+  exposure_us: 20000
+  gain: 0.0
+  avg_frames: 3
+  target_fps: 30
+
+output:
+  slm1_tmp_dir: "output/slm1_tmp"
+  slm2_tmp_dir: "output/slm2_tmp"
+
+mock:
+  slm1_size: [1200, 1920]
+  slm2_size: [1200, 1920]
+  camera_size: [800, 800]
+  noise_std: 5.0
