@@ -113,15 +113,36 @@ class StatusPanel(QtWidgets.QGroupBox):
 
 
 class PreviewPanel(QtWidgets.QGroupBox):
+    display_mode_changed = QtCore.pyqtSignal(str)
+
     def __init__(self, parent=None):
         super().__init__("SLM2 窗口示意", parent)
         self.label = QtWidgets.QLabel()
         self.label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.label.setMinimumSize(240, 160)
         self.label.setStyleSheet("background-color: #222; border: 1px solid #444;")
+
+        self.mode_combo = QtWidgets.QComboBox()
+        self.mode_combo.addItem("显示加载结果", userData="loaded")
+        self.mode_combo.addItem("显示 SLM2 返回", userData="returned")
+
+        mode_layout = QtWidgets.QHBoxLayout()
+        mode_layout.addWidget(QtWidgets.QLabel("显示源"))
+        mode_layout.addWidget(self.mode_combo, 1)
+
         layout = QtWidgets.QVBoxLayout()
+        layout.addLayout(mode_layout)
         layout.addWidget(self.label)
         self.setLayout(layout)
+
+        self.mode_combo.currentIndexChanged.connect(self._emit_mode)
+
+    def _emit_mode(self) -> None:
+        self.display_mode_changed.emit(self.display_mode())
+
+    def display_mode(self) -> str:
+        data = self.mode_combo.currentData()
+        return data if data else "loaded"
 
     def update_pixmap(self, pixmap: QtGui.QPixmap) -> None:
         if pixmap is None:

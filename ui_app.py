@@ -56,6 +56,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.recording = False
         self.record_dir: Optional[Path] = None
+        self._latest_slm2_loaded_phase: Optional[np.ndarray] = None
+        self._latest_slm2_returned_phase: Optional[np.ndarray] = None
 
         self._setup_ui()
         self._setup_threads()
@@ -93,6 +95,7 @@ class MainWindow(QtWidgets.QMainWindow):
             widget.offset_changed.connect(self.on_layer_change)
 
         self.slm2_panel.apply_button.clicked.connect(self.apply_slm2)
+        self.preview_panel.display_mode_changed.connect(lambda _: self.update_preview())
 
         self.run_button.clicked.connect(self.run_all)
         self.stop_button.clicked.connect(self.stop_all)
@@ -227,6 +230,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.slm1_worker.error.connect(self.on_slm1_error)
         self.slm2_worker.status.connect(self.on_slm2_status)
         self.slm2_worker.error.connect(self.on_slm2_error)
+        self.slm2_worker.phase_ready.connect(self.on_slm2_phase_ready)
 
         self.camera_thread.start()
         self.slm1_thread.start()
@@ -410,6 +414,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._latest_preview = (rects, centers, enabled)
         return phase
 
+    def on_slm2_phase_ready(self, loaded: Optional[np.ndarray], returned: Optional[np.ndarray]) -> None:
+        self._latest_slm2_loaded_phase = loaded
+        self._latest_slm2_returned_phase = returned
+        self.update_preview()
+
     def update_preview(self) -> None:
         if not hasattr(self, "_latest_preview"):
             try:
@@ -421,7 +430,15 @@ class MainWindow(QtWidgets.QMainWindow):
             slm2_shape = (self.slm2_controller.height, self.slm2_controller.width)
         else:
             slm2_shape = tuple(self.config.get("mock", {}).get("slm2_size", [1200, 1920]))
-        img = make_preview_image(slm2_shape, rects, centers, enabled)
+        mode = self.preview_panel.display_mode()
+        base_phase = None
+        if mode == "returned":
+            base_phase = self._latest_slm2_returned_phase
+            if base_phase is None:
+                base_phase = self._latest_slm2_loaded_phase
+        else:
+            base_phase = self._latest_slm2_loaded_phase
+        img = make_preview_image(slm2_shape, rects, centers, enabled, base_phase=base_phase)
         qimage = QtGui.QImage(
             img.tobytes("raw", "RGB"),
             img.width,

@@ -148,13 +148,19 @@ def make_preview_image(
     rects: List[Tuple[int, int, int, int]],
     centers: List[Tuple[int, int]],
     enabled: List[bool],
+    base_phase: Optional[np.ndarray] = None,
     scale: float = 0.2,
 ) -> Image.Image:
     height, width = slm_shape
     preview_w = max(1, int(width * scale))
     preview_h = max(1, int(height * scale))
 
-    img = Image.new("RGB", (preview_w, preview_h), color=(20, 20, 20))
+    if base_phase is not None:
+        phase = resize_phase(base_phase, slm_shape)
+        phase_u8 = phase_to_uint8(phase)
+        img = Image.fromarray(phase_u8, mode="L").resize((preview_w, preview_h), Image.BILINEAR).convert("RGB")
+    else:
+        img = Image.new("RGB", (preview_w, preview_h), color=(20, 20, 20))
 
     from PIL import ImageDraw
 

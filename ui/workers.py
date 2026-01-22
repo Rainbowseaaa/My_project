@@ -91,6 +91,7 @@ class SLM1Worker(QtCore.QObject):
 class SLM2Worker(QtCore.QObject):
     status = QtCore.pyqtSignal(str)
     error = QtCore.pyqtSignal(str)
+    phase_ready = QtCore.pyqtSignal(object, object)
 
     def __init__(self, controller, slm_shape, parent=None):
         super().__init__(parent)
@@ -104,6 +105,8 @@ class SLM2Worker(QtCore.QObject):
                 comp = load_compensation(comp_path, phase.shape, meaning="encoded_0_255")
                 phase = apply_compensation(phase, comp)
             self._slm.display_phase(phase, use_comp=False)
+            returned = getattr(self._slm, "last_phase", None)
+            self.phase_ready.emit(phase, returned)
             self.status.emit("SLM2 合成相位已加载")
         except Exception as exc:
             self.error.emit(str(exc))
