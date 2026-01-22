@@ -245,8 +245,8 @@ class SLM1Controller:
         self.output_dir = output_dir
         ensure_dir(str(self.output_dir))
 
-    def display_gray(self, img_u8: np.ndarray) -> None:
-        if self.comp_u8 is not None:
+    def display_gray(self, img_u8: np.ndarray, use_comp: bool = True) -> None:
+        if use_comp and self.comp_u8 is not None:
             img_u8 = ((img_u8.astype(np.uint16) + self.comp_u8.astype(np.uint16)) % 256).astype(np.uint8)
         img = Image.fromarray(img_u8)
         path = self.output_dir / "slm1_temp.bmp"
@@ -278,8 +278,9 @@ class SLM2Controller:
         self.height = self.slm.height_px()
         self.comp = load_compensation(config.get("compensation_path", ""), (self.height, self.width))
 
-    def display_phase(self, phase: np.ndarray) -> None:
-        phase = apply_compensation(phase, self.comp)
+    def display_phase(self, phase: np.ndarray, use_comp: bool = True) -> None:
+        if use_comp:
+            phase = apply_compensation(phase, self.comp)
         img_u8 = phase_to_uint8(phase)
         img = Image.fromarray(img_u8)
         path = self.output_dir / "slm2_temp.bmp"
