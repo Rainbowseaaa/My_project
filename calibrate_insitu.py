@@ -8,6 +8,7 @@ import argparse
 import json
 import math
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -51,6 +52,42 @@ def load_config(path: str) -> Dict:
 
 def ensure_dir(path: str) -> None:
     Path(path).mkdir(parents=True, exist_ok=True)
+
+
+def import_heds(config: Dict):
+    from importlib import import_module, util
+
+    if util.find_spec("HEDS") is None:
+        repo_root = Path(__file__).resolve().parent
+        candidates = [
+            config.get("sdk_path"),
+            str(repo_root / "SLM Display SDK (Python) v4.1.0 Examples"),
+        ]
+        for candidate in candidates:
+            if not candidate:
+                continue
+            candidate_path = str(Path(candidate).expanduser().resolve())
+            if candidate_path not in sys.path:
+                sys.path.insert(0, candidate_path)
+
+    if util.find_spec("HEDS") is None:
+        raise ModuleNotFoundError(
+            "未找到 HEDS 模块，请确认 SLM Display SDK 已安装或在 config.yaml 的 slm2.sdk_path 中指定路径。"
+        )
+
+    return import_module("HEDS")
+
+
+def ensure_hardware_imports(config: Dict) -> None:
+    slm2_cfg = config.get("slm2", {})
+    if slm2_cfg:
+        import_heds(slm2_cfg)
+    try:
+        from UPO_SLM_80Rplus.SLM_UPOLabs import SLM_UP  # noqa: F401
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "未找到 SLM1 SDK，请确认 UPO_SLM_80Rplus 已安装或路径已加入 PYTHONPATH。"
+        ) from exc
 
 
 def roi_from_dict(data: Dict) -> ROI:
@@ -259,9 +296,7 @@ class SLM1Controller:
 
 class SLM2Controller:
     def __init__(self, config: Dict, output_dir: Path):
-        from importlib import import_module
-
-        heds = import_module("HEDS")
+        heds = import_heds(config)
         self.heds = heds
         self.output_dir = output_dir
         ensure_dir(str(self.output_dir))
@@ -470,7 +505,7 @@ def run_calibration(config: Dict, mock: bool) -> None:
         camera = MockCamera(config["mock"], slm2_shape, config["mock"].get("noise_std", 5.0))
         slm1 = None
     else:
-        ensure_hardware_imports()
+        ensure_hardware_imports(config)
         slm1 = SLM1Controller(config["slm1"], slm1_temp_dir)
         slm2 = SLM2Controller(config["slm2"], slm2_temp_dir)
         slm2_shape = (slm2.height, slm2.width)
