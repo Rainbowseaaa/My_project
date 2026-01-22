@@ -292,10 +292,10 @@ class SLM2Controller:
         img = Image.fromarray(img_u8)
         path = self.output_dir / "slm2_temp.bmp"
         img.save(path)
-        if hasattr(self.slm, "showDataFromImageFile"):
-            err = self.slm.showDataFromImageFile(str(path))
-        elif hasattr(self.slm, "showCGHFromImageFile"):
+        if hasattr(self.slm, "showCGHFromImageFile"):
             err = self.slm.showCGHFromImageFile(str(path))
+        elif hasattr(self.slm, "showDataFromImageFile"):
+            err = self.slm.showDataFromImageFile(str(path))
         else:
             raise RuntimeError("未找到可用的 SLM2 显示接口")
         if err != self.heds.HEDSERR_NoError:
