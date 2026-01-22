@@ -8,6 +8,7 @@ import argparse
 import json
 import math
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -51,6 +52,30 @@ def load_config(path: str) -> Dict:
 
 def ensure_dir(path: str) -> None:
     Path(path).mkdir(parents=True, exist_ok=True)
+
+
+def import_heds(config: Dict):
+    from importlib import import_module, util
+
+    if util.find_spec("HEDS") is None:
+        repo_root = Path(__file__).resolve().parent
+        candidates = [
+            config.get("sdk_path"),
+            str(repo_root / "SLM Display SDK (Python) v4.1.0 Examples"),
+        ]
+        for candidate in candidates:
+            if not candidate:
+                continue
+            candidate_path = str(Path(candidate).expanduser().resolve())
+            if candidate_path not in sys.path:
+                sys.path.insert(0, candidate_path)
+
+    if util.find_spec("HEDS") is None:
+        raise ModuleNotFoundError(
+            "未找到 HEDS 模块，请确认 SLM Display SDK 已安装或在 config.yaml 的 slm2.sdk_path 中指定路径。"
+        )
+
+    return import_module("HEDS")
 
 
 def roi_from_dict(data: Dict) -> ROI:
@@ -245,8 +270,8 @@ class SLM1Controller:
         self.output_dir = output_dir
         ensure_dir(str(self.output_dir))
 
-    def display_gray(self, img_u8: np.ndarray) -> None:
-        if self.comp_u8 is not None:
+    def display_gray(self, img_u8: np.ndarray, use_comp: bool = True) -> None:
+        if use_comp and self.comp_u8 is not None:
             img_u8 = ((img_u8.astype(np.uint16) + self.comp_u8.astype(np.uint16)) % 256).astype(np.uint8)
         img = Image.fromarray(img_u8)
         path = self.output_dir / "slm1_temp.bmp"
@@ -259,9 +284,7 @@ class SLM1Controller:
 
 class SLM2Controller:
     def __init__(self, config: Dict, output_dir: Path):
-        from importlib import import_module
-
-        heds = import_module("HEDS")
+        heds = import_heds(config)
         self.heds = heds
         self.output_dir = output_dir
         ensure_dir(str(self.output_dir))
@@ -278,16 +301,17 @@ class SLM2Controller:
         self.height = self.slm.height_px()
         self.comp = load_compensation(config.get("compensation_path", ""), (self.height, self.width))
 
-    def display_phase(self, phase: np.ndarray) -> None:
-        phase = apply_compensation(phase, self.comp)
+    def display_phase(self, phase: np.ndarray, use_comp: bool = True) -> None:
+        if use_comp:
+            phase = apply_compensation(phase, self.comp)
         img_u8 = phase_to_uint8(phase)
         img = Image.fromarray(img_u8)
         path = self.output_dir / "slm2_temp.bmp"
         img.save(path)
-        if hasattr(self.slm, "showDataFromImageFile"):
-            err = self.slm.showDataFromImageFile(str(path))
-        elif hasattr(self.slm, "showCGHFromImageFile"):
+        if hasattr(self.slm, "showCGHFromImageFile"):
             err = self.slm.showCGHFromImageFile(str(path))
+        elif hasattr(self.slm, "showDataFromImageFile"):
+            err = self.slm.showDataFromImageFile(str(path))
         else:
             raise RuntimeError("未找到可用的 SLM2 显示接口")
         if err != self.heds.HEDSERR_NoError:
