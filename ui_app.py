@@ -136,7 +136,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.plot_widget = pg.GraphicsLayoutWidget()
         self.view_box = self.plot_widget.addViewBox(lockAspect=True)
-        self.view_box.setMouseMode(pg.ViewBox.MouseMode.PanMode)
+        pan_mode = getattr(getattr(pg.ViewBox, "MouseMode", None), "PanMode", None)
+        if pan_mode is None:
+            pan_mode = getattr(pg.ViewBox, "PanMode", None)
+        if pan_mode is not None:
+            self.view_box.setMouseMode(pan_mode)
         self.image_item = pg.ImageItem()
         self.view_box.addItem(self.image_item)
         self.view_box.setBackgroundColor("k")
