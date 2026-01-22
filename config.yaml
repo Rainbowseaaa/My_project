@@ -1,0 +1,73 @@
+# 原位标定配置文件
+# 注意：路径请根据实际工程文件调整
+
+camera:
+  device_sn: ""  # 留空则使用第一台相机
+  exposure_us: 20000
+  gain: 0.0
+  avg_frames: 3
+
+slm1:
+  screen_num: 1
+  compensation_path: ""  # SLM1 面型补偿文件 (png/bmp)
+  gaussian:
+    enabled: true
+    sigma_px: 60
+    peak: 255
+
+slm2:
+  compensation_path: ""  # SLM2 面型补偿文件 (png/bmp)
+  pixel_pitch_x_m: 8.0e-6
+  pixel_pitch_y_m: 8.0e-6
+  block_mode: "checkerboard"  # checkerboard 或 blaze
+
+calibration:
+  lambda_m: 5.32e-7
+  n_layers: 5
+  window:
+    shape: "circle"  # circle 或 square
+    size_px: 40
+    scan_step_px: 20
+    fine_scan:
+      enabled: true
+      radius_px: 20
+      step_px: 5
+  roi_auto:
+    enabled: true
+    half_size_px: 120
+  roi_layers: []  # 可选，每层单独设置 ROI，格式：[{x_min:0,x_max:1000,y_min:0,y_max:800}, ...]
+
+  roi_cam:
+    x_min: 200
+    x_max: 500
+    y_min: 200
+    y_max: 500
+  roi_focus:
+    x_min: 200
+    x_max: 500
+    y_min: 200
+    y_max: 500
+
+  metric:
+    type: "roi_ratio"  # roi_ratio 或 roi_sum
+
+  focus_metric:
+    type: "second_moment"  # second_moment 或 peak
+
+  f_list_m:
+    - 0.20
+    - 0.25
+    - 0.30
+    - 0.35
+    - 0.40
+
+output:
+  result_path: "output/calibration_result.json"
+  scan_maps_dir: "output/scan_maps"
+  focus_curves_dir: "output/focus_curves"
+
+mock:
+  slm1_size: [1200, 1920]
+  slm2_size: [1200, 1920]
+  camera_size: [800, 800]
+  noise_std: 5.0
