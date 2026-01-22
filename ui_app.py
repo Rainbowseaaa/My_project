@@ -5,13 +5,13 @@ from typing import List, Optional
 
 import numpy as np
 import pyqtgraph as pg
+from PIL import Image
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from calibrate_insitu import CameraGX, MockCamera, MockSLM2, SLM1Controller, SLM2Controller
 from ui.phase_utils import compose_layers, load_phase_file, make_preview_image
 from ui.widgets import (
     ImageSourcePanel,
-    LayerConfig,
     LogPanel,
     PlayerControls,
     PreviewPanel,
