@@ -12,6 +12,8 @@
 pip install -r requirements.txt
 ```
 
+> 注意：当前依赖使用 `numpy<2`，避免部分编译扩展（如 matplotlib 及其依赖）与 NumPy 2.x 产生 ABI 不兼容。
+
 ### 运行 UI
 
 ```bash

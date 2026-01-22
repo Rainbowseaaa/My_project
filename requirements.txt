@@ -1,6 +1,6 @@
 PyQt6
 pyqtgraph
-numpy
+numpy<2
 Pillow
 scipy
 pyyaml
