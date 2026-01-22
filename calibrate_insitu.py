@@ -50,13 +50,6 @@ def load_config(path: str) -> Dict:
     raise ValueError(f"不支持的配置文件格式: {config_path}")
 
 
-def ensure_hardware_imports() -> None:
-    # 明确导入仓库内的硬件控制包，便于检查依赖是否就绪
-    from DaHeng.GetImage import capture  # noqa: F401
-    from UPO_SLM_80Rplus.SLM_UPOLabs import SLM_UP  # noqa: F401
-    import HEDS  # noqa: F401
-
-
 def ensure_dir(path: str) -> None:
     Path(path).mkdir(parents=True, exist_ok=True)
 
