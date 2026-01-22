@@ -6,6 +6,7 @@ slm1:
 
 slm2:
   compensation_path: ""
+  sdk_path: ""
   block_mode: "checkerboard"
   outside_mode: "zero"
   window_size_px: [400, 400]
