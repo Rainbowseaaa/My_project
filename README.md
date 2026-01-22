@@ -30,7 +30,7 @@ python ui_app.py --mock
 
 默认配置文件：`config_ui.yaml`，包含以下内容：
 
-- SLM1/SLM2 分辨率、窗口尺寸、补偿图路径（可选 `slm2.sdk_path` 指向 HEDS SDK 目录）
+- SLM1/SLM2 分辨率、窗口尺寸、补偿图路径
 - 四层相位默认中心与偏移
 - 相机参数、播放间隔等
 

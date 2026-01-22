@@ -17,7 +17,6 @@ slm1:
 
 slm2:
   compensation_path: ""  # SLM2 面型补偿文件 (png/bmp)
-  sdk_path: ""  # HEDS SDK 路径（若 HEDS 模块不在环境中，请填此项）
   pixel_pitch_x_m: 8.0e-6
   pixel_pitch_y_m: 8.0e-6
   block_mode: "checkerboard"  # checkerboard 或 blaze
