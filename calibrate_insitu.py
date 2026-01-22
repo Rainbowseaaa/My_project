@@ -49,6 +49,13 @@ def load_config(path: str) -> Dict:
     raise ValueError(f"不支持的配置文件格式: {config_path}")
 
 
+def ensure_hardware_imports() -> None:
+    # 明确导入仓库内的硬件控制包，便于检查依赖是否就绪
+    from DaHeng.GetImage import capture  # noqa: F401
+    from UPO_SLM_80Rplus.SLM_UPOLabs import SLM_UP  # noqa: F401
+    import HEDS  # noqa: F401
+
+
 def ensure_dir(path: str) -> None:
     Path(path).mkdir(parents=True, exist_ok=True)
 
@@ -470,6 +477,7 @@ def run_calibration(config: Dict, mock: bool) -> None:
         camera = MockCamera(config["mock"], slm2_shape, config["mock"].get("noise_std", 5.0))
         slm1 = None
     else:
+        ensure_hardware_imports()
         slm1 = SLM1Controller(config["slm1"], slm1_temp_dir)
         slm2 = SLM2Controller(config["slm2"], slm2_temp_dir)
         slm2_shape = (slm2.height, slm2.width)
@@ -556,6 +564,7 @@ def check_devices(config: Dict) -> None:
     check_dir = Path(output_cfg["scan_maps_dir"]).parent / "device_check"
     ensure_dir(str(check_dir))
 
+    ensure_hardware_imports()
     slm1 = SLM1Controller(config["slm1"], check_dir)
     slm2 = SLM2Controller(config["slm2"], check_dir)
     camera = CameraGX(config["camera"])
