@@ -8,6 +8,7 @@ import argparse
 import json
 import math
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -51,6 +52,42 @@ def load_config(path: str) -> Dict:
 
 def ensure_dir(path: str) -> None:
     Path(path).mkdir(parents=True, exist_ok=True)
+
+
+def import_heds(config: Dict):
+    from importlib import import_module, util
+
+    if util.find_spec("HEDS") is None:
+        repo_root = Path(__file__).resolve().parent
+        candidates = [
+            config.get("sdk_path"),
+            str(repo_root / "SLM Display SDK (Python) v4.1.0 Examples"),
+        ]
+        for candidate in candidates:
+            if not candidate:
+                continue
+            candidate_path = str(Path(candidate).expanduser().resolve())
+            if candidate_path not in sys.path:
+                sys.path.insert(0, candidate_path)
+
+    if util.find_spec("HEDS") is None:
+        raise ModuleNotFoundError(
+            "未找到 HEDS 模块，请确认 SLM Display SDK 已安装或在 config.yaml 的 slm2.sdk_path 中指定路径。"
+        )
+
+    return import_module("HEDS")
+
+
+def ensure_hardware_imports(config: Dict) -> None:
+    slm2_cfg = config.get("slm2", {})
+    if slm2_cfg:
+        import_heds(slm2_cfg)
+    try:
+        from UPO_SLM_80Rplus.SLM_UPOLabs import SLM_UP  # noqa: F401
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "未找到 SLM1 SDK，请确认 UPO_SLM_80Rplus 已安装或路径已加入 PYTHONPATH。"
+        ) from exc
 
 
 def roi_from_dict(data: Dict) -> ROI:
@@ -245,8 +282,8 @@ class SLM1Controller:
         self.output_dir = output_dir
         ensure_dir(str(self.output_dir))
 
-    def display_gray(self, img_u8: np.ndarray) -> None:
-        if self.comp_u8 is not None:
+    def display_gray(self, img_u8: np.ndarray, use_comp: bool = True) -> None:
+        if use_comp and self.comp_u8 is not None:
             img_u8 = ((img_u8.astype(np.uint16) + self.comp_u8.astype(np.uint16)) % 256).astype(np.uint8)
         img = Image.fromarray(img_u8)
         path = self.output_dir / "slm1_temp.bmp"
@@ -259,9 +296,7 @@ class SLM1Controller:
 
 class SLM2Controller:
     def __init__(self, config: Dict, output_dir: Path):
-        from importlib import import_module
-
-        heds = import_module("HEDS")
+        heds = import_heds(config)
         self.heds = heds
         self.output_dir = output_dir
         ensure_dir(str(self.output_dir))
@@ -278,16 +313,17 @@ class SLM2Controller:
         self.height = self.slm.height_px()
         self.comp = load_compensation(config.get("compensation_path", ""), (self.height, self.width))
 
-    def display_phase(self, phase: np.ndarray) -> None:
-        phase = apply_compensation(phase, self.comp)
+    def display_phase(self, phase: np.ndarray, use_comp: bool = True) -> None:
+        if use_comp:
+            phase = apply_compensation(phase, self.comp)
         img_u8 = phase_to_uint8(phase)
         img = Image.fromarray(img_u8)
         path = self.output_dir / "slm2_temp.bmp"
         img.save(path)
-        if hasattr(self.slm, "showDataFromImageFile"):
-            err = self.slm.showDataFromImageFile(str(path))
-        elif hasattr(self.slm, "showCGHFromImageFile"):
+        if hasattr(self.slm, "showCGHFromImageFile"):
             err = self.slm.showCGHFromImageFile(str(path))
+        elif hasattr(self.slm, "showDataFromImageFile"):
+            err = self.slm.showDataFromImageFile(str(path))
         else:
             raise RuntimeError("未找到可用的 SLM2 显示接口")
         if err != self.heds.HEDSERR_NoError:
@@ -389,15 +425,15 @@ def scan_layer(camera: CameraBase, slm2, layer_idx: int, centers: List[Tuple[int
 
 
 def measure_focus(camera: CameraBase, slm2, layer_idx: int, center: Tuple[int, int],
-                  centers: List[Tuple[int, int]], config: Dict, slm2_shape: Tuple[int, int],
-                  block_mode: str,
+                  centers: List[Tuple[int, int]], config: Dict, slm2_cfg: Dict,
+                  slm2_shape: Tuple[int, int], block_mode: str,
                   output_dir: Path, mock_cam: Optional[MockCamera]) -> Tuple[float, List[Tuple[float, float]]]:
     roi_focus = roi_from_dict(config["roi_focus"])
     metric_type = config["focus_metric"]["type"]
     f_list = [float(f) for f in config["f_list_m"]]
     pixel_pitch = (
-        float(config["pixel_pitch_x_m"]),
-        float(config["pixel_pitch_y_m"]),
+        float(slm2_cfg["pixel_pitch_x_m"]),
+        float(slm2_cfg["pixel_pitch_y_m"]),
     )
     win_cfg = config["window"]
     shape_type = win_cfg["shape"]
@@ -469,6 +505,7 @@ def run_calibration(config: Dict, mock: bool) -> None:
         camera = MockCamera(config["mock"], slm2_shape, config["mock"].get("noise_std", 5.0))
         slm1 = None
     else:
+        ensure_hardware_imports(config)
         slm1 = SLM1Controller(config["slm1"], slm1_temp_dir)
         slm2 = SLM2Controller(config["slm2"], slm2_temp_dir)
         slm2_shape = (slm2.height, slm2.width)
@@ -523,6 +560,7 @@ def run_calibration(config: Dict, mock: bool) -> None:
                 center,
                 centers[:layer_i],
                 config["calibration"],
+                config["slm2"],
                 slm2_shape,
                 block_mode,
                 Path(output_cfg["focus_curves_dir"]),
