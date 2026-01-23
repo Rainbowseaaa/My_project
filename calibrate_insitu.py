@@ -425,15 +425,15 @@ def scan_layer(camera: CameraBase, slm2, layer_idx: int, centers: List[Tuple[int
 
 
 def measure_focus(camera: CameraBase, slm2, layer_idx: int, center: Tuple[int, int],
-                  centers: List[Tuple[int, int]], config: Dict, slm2_shape: Tuple[int, int],
-                  block_mode: str,
+                  centers: List[Tuple[int, int]], config: Dict, slm2_cfg: Dict,
+                  slm2_shape: Tuple[int, int], block_mode: str,
                   output_dir: Path, mock_cam: Optional[MockCamera]) -> Tuple[float, List[Tuple[float, float]]]:
     roi_focus = roi_from_dict(config["roi_focus"])
     metric_type = config["focus_metric"]["type"]
     f_list = [float(f) for f in config["f_list_m"]]
     pixel_pitch = (
-        float(config["pixel_pitch_x_m"]),
-        float(config["pixel_pitch_y_m"]),
+        float(slm2_cfg["pixel_pitch_x_m"]),
+        float(slm2_cfg["pixel_pitch_y_m"]),
     )
     win_cfg = config["window"]
     shape_type = win_cfg["shape"]
@@ -560,6 +560,7 @@ def run_calibration(config: Dict, mock: bool) -> None:
                 center,
                 centers[:layer_i],
                 config["calibration"],
+                config["slm2"],
                 slm2_shape,
                 block_mode,
                 Path(output_cfg["focus_curves_dir"]),
