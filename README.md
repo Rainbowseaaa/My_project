@@ -26,6 +26,14 @@ python ui_app.py
 python ui_app.py --mock
 ```
 
+### 校准可视化
+
+如需在 `calibrate_insitu.py` 运行时显示校准层数、中心位置、相机画面与热图，可使用：
+
+```bash
+python calibrate_insitu.py --visualize
+```
+
 ### 配置文件
 
 默认配置文件：`config_ui.yaml`，包含以下内容：
