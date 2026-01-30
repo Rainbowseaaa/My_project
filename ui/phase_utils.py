@@ -280,17 +280,50 @@ def render_letter_field(shape: Tuple[int, int], letter: str) -> Tuple[np.ndarray
     return amp, phase
 
 
-def load_mnist_sample(index: int, fashion: bool = False) -> np.ndarray:
+def _download_file(url: str, dest: Path) -> None:
+    import urllib.request
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with urllib.request.urlopen(url) as resp, dest.open("wb") as f:
+        f.write(resp.read())
+
+
+def _maybe_download_mnist(data_dir: Path, fashion: bool) -> None:
+    base = "http://fashion-mnist.s3-website.eu-central-1.amazonaws.com" if fashion else "http://yann.lecun.com/exdb/mnist"
+    files = [
+        "train-images-idx3-ubyte.gz",
+        "train-labels-idx1-ubyte.gz",
+        "t10k-images-idx3-ubyte.gz",
+        "t10k-labels-idx1-ubyte.gz",
+    ]
+    for name in files:
+        dest = data_dir / name
+        if not dest.exists():
+            _download_file(f"{base}/{name}", dest)
+
+
+def _load_idx_images(path: Path) -> np.ndarray:
+    import gzip
+
+    with gzip.open(path, "rb") as f:
+        data = f.read()
+    magic = int.from_bytes(data[0:4], "big")
+    if magic != 2051:
+        raise RuntimeError(f"IDX magic 错误: {magic}")
+    num = int.from_bytes(data[4:8], "big")
+    rows = int.from_bytes(data[8:12], "big")
+    cols = int.from_bytes(data[12:16], "big")
+    images = np.frombuffer(data, dtype=np.uint8, offset=16)
+    return images.reshape(num, rows, cols)
+
+
+def load_mnist_sample(index: int, fashion: bool = False, data_dir: str | None = None) -> np.ndarray:
+    root = Path(data_dir or "data/mnist")
+    dataset_dir = root / ("fashion" if fashion else "mnist")
     try:
-        if fashion:
-            from tensorflow.keras.datasets import fashion_mnist
-
-            (x_train, _), _ = fashion_mnist.load_data()
-        else:
-            from tensorflow.keras.datasets import mnist
-
-            (x_train, _), _ = mnist.load_data()
+        _maybe_download_mnist(dataset_dir, fashion)
+        images = _load_idx_images(dataset_dir / "train-images-idx3-ubyte.gz")
     except Exception as exc:
         raise RuntimeError(f"MNIST 数据集不可用: {exc}") from exc
-    idx = int(index) % x_train.shape[0]
-    return x_train[idx]
+    idx = int(index) % images.shape[0]
+    return images[idx]

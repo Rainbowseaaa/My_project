@@ -98,11 +98,19 @@ class SLM1Worker(QtCore.QObject):
                 elif field_params.get("mode") == "letter":
                     amp, phase = render_letter_field(self._slm_shape, field_params.get("letter", "A"))
                 elif field_params.get("mode") == "mnist":
-                    sample = load_mnist_sample(int(field_params.get("index", 0)), fashion=False)
+                    sample = load_mnist_sample(
+                        int(field_params.get("index", 0)),
+                        fashion=False,
+                        data_dir=field_params.get("data_dir"),
+                    )
                     amp = np.asarray(Image.fromarray(sample).resize((self._slm_shape[1], self._slm_shape[0])), dtype=np.float64) / 255.0
                     phase = np.zeros_like(amp)
                 elif field_params.get("mode") == "fashion_mnist":
-                    sample = load_mnist_sample(int(field_params.get("index", 0)), fashion=True)
+                    sample = load_mnist_sample(
+                        int(field_params.get("index", 0)),
+                        fashion=True,
+                        data_dir=field_params.get("data_dir"),
+                    )
                     amp = np.asarray(Image.fromarray(sample).resize((self._slm_shape[1], self._slm_shape[0])), dtype=np.float64) / 255.0
                     phase = np.zeros_like(amp)
                 else:

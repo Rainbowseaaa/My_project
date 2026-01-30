@@ -40,6 +40,9 @@ output:
   slm1_tmp_dir: "output/slm1_tmp"
   slm2_tmp_dir: "output/slm2_tmp"
 
+datasets:
+  mnist_dir: "data/mnist"
+
 mock:
   slm1_size: [1200, 1920]
   slm2_size: [1200, 1920]

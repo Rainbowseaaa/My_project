@@ -135,7 +135,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.camera_control.stop_button.clicked.connect(self.stop_camera)
         self.camera_control.reset_view_button.clicked.connect(self.reset_camera_view)
         self.camera_control.apply_exposure_button.clicked.connect(self.apply_exposure)
-        self.camera_control.mode_combo.currentIndexChanged.connect(self.on_camera_mode_changed)
 
         left_layout = QtWidgets.QVBoxLayout()
         left_layout.addWidget(self.image_panel)
@@ -171,6 +170,16 @@ class MainWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(group)
 
         self.plot_widget = pg.GraphicsLayoutWidget()
+        self.camera_toolbar = QtWidgets.QHBoxLayout()
+        self.camera_toolbar.setContentsMargins(0, 0, 0, 0)
+        self.camera_mode_button = QtWidgets.QToolButton()
+        self.camera_mode_button.setCheckable(True)
+        self.camera_mode_button.setToolTip("拖动/框选切换")
+        self.camera_mode_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowCursor))
+        self.camera_mode_button.clicked.connect(self.toggle_camera_mode)
+        self.camera_toolbar.addStretch(1)
+        self.camera_toolbar.addWidget(self.camera_mode_button)
+        layout.addLayout(self.camera_toolbar)
         self.view_box = CameraViewBox()
         self.plot_widget.addItem(self.view_box)
         self._pan_mode = getattr(getattr(pg.ViewBox, "MouseMode", None), "PanMode", None)
@@ -521,6 +530,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "l": self.image_panel.lg_l_spin.value(),
             "letter": self.image_panel.letter_edit.text().strip(),
             "index": self.image_panel.dataset_index_spin.value(),
+            "data_dir": self.config.get("datasets", {}).get("mnist_dir", "data/mnist"),
         }
         QtCore.QMetaObject.invokeMethod(
             self.slm1_worker,
@@ -709,7 +719,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view_box.autoRange()
 
     def on_camera_mode_changed(self) -> None:
-        mode = self.camera_control.mode_combo.currentData() or "pan"
+        mode = "select" if self.camera_mode_button.isChecked() else "pan"
         if mode == "select":
             self.roi.setVisible(True)
             self.view_box.set_mode("select")
@@ -721,6 +731,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self.view_box.set_mode("pan")
             if self._pan_mode is not None:
                 self.view_box.setMouseMode(self._pan_mode)
+        icon = self.style().standardIcon(
+            QtWidgets.QStyle.StandardPixmap.SP_DialogOpenButton if mode == "select" else QtWidgets.QStyle.StandardPixmap.SP_ArrowCursor
+        )
+        self.camera_mode_button.setIcon(icon)
+
+    def toggle_camera_mode(self) -> None:
+        self.on_camera_mode_changed()
 
     def on_camera_select_drag(self, start: QtCore.QPointF, end: QtCore.QPointF, finished: bool) -> None:
         p1 = self.view_box.mapSceneToView(start)

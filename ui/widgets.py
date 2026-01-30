@@ -338,19 +338,35 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         file_widget = QtWidgets.QWidget()
         file_widget.setLayout(file_layout)
 
+        lg_form = QtWidgets.QFormLayout()
+        lg_form.addRow("LG w0", self.lg_w0_spin)
+        lg_form.addRow("LG p", self.lg_p_spin)
+        lg_form.addRow("LG l", self.lg_l_spin)
+        lg_widget = QtWidgets.QWidget()
+        lg_widget.setLayout(lg_form)
+
+        letter_form = QtWidgets.QFormLayout()
+        letter_form.addRow("字母", self.letter_edit)
+        letter_widget = QtWidgets.QWidget()
+        letter_widget.setLayout(letter_form)
+
+        mnist_form = QtWidgets.QFormLayout()
+        mnist_form.addRow("数据集索引", self.dataset_index_spin)
+        mnist_widget = QtWidgets.QWidget()
+        mnist_widget.setLayout(mnist_form)
+
+        empty_widget = QtWidgets.QWidget()
+
+        self.field_stack = QtWidgets.QStackedWidget()
+        self.field_stack.addWidget(empty_widget)  # file
+        self.field_stack.addWidget(lg_widget)
+        self.field_stack.addWidget(letter_widget)
+        self.field_stack.addWidget(mnist_widget)
+
         gen_layout = QtWidgets.QGridLayout()
         gen_layout.addWidget(QtWidgets.QLabel("光场类型"), 0, 0)
         gen_layout.addWidget(self.field_mode_combo, 0, 1)
-        gen_layout.addWidget(QtWidgets.QLabel("LG w0"), 1, 0)
-        gen_layout.addWidget(self.lg_w0_spin, 1, 1)
-        gen_layout.addWidget(QtWidgets.QLabel("LG p"), 2, 0)
-        gen_layout.addWidget(self.lg_p_spin, 2, 1)
-        gen_layout.addWidget(QtWidgets.QLabel("LG l"), 3, 0)
-        gen_layout.addWidget(self.lg_l_spin, 3, 1)
-        gen_layout.addWidget(QtWidgets.QLabel("字母"), 4, 0)
-        gen_layout.addWidget(self.letter_edit, 4, 1)
-        gen_layout.addWidget(QtWidgets.QLabel("数据集索引"), 5, 0)
-        gen_layout.addWidget(self.dataset_index_spin, 5, 1)
+        gen_layout.addWidget(self.field_stack, 1, 0, 1, 2)
         gen_widget = QtWidgets.QWidget()
         gen_widget.setLayout(gen_layout)
 
@@ -392,8 +408,10 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.slm1_comp_button.clicked.connect(self._pick_slm1_comp)
         self.load_mode_combo.currentIndexChanged.connect(self._update_load_mode)
         self.play_mode_combo.currentIndexChanged.connect(self._update_play_mode)
+        self.field_mode_combo.currentIndexChanged.connect(self._update_field_mode)
         self._update_load_mode()
         self._update_play_mode()
+        self._update_field_mode()
 
     def _pick_image(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -430,6 +448,18 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.play_button.setEnabled(is_continuous)
         self.stop_play_button.setEnabled(is_continuous)
         self.single_button.setEnabled(not is_continuous)
+
+    def _update_field_mode(self) -> None:
+        mode = self.field_mode_combo.currentData() or "file"
+        if mode == "lg":
+            index = 1
+        elif mode == "letter":
+            index = 2
+        elif mode in {"mnist", "fashion_mnist"}:
+            index = 3
+        else:
+            index = 0
+        self.field_stack.setCurrentIndex(index)
 
 
 class SLM2Panel(QtWidgets.QGroupBox):
@@ -490,9 +520,6 @@ class CameraControlPanel(QtWidgets.QGroupBox):
         self.run_button = QtWidgets.QPushButton("Run 相机")
         self.stop_button = QtWidgets.QPushButton("Stop 相机")
         self.reset_view_button = QtWidgets.QPushButton("复位视图")
-        self.mode_combo = QtWidgets.QComboBox()
-        self.mode_combo.addItem("拖动", userData="pan")
-        self.mode_combo.addItem("框选", userData="select")
         self.exposure_spin = QtWidgets.QDoubleSpinBox()
         self.exposure_spin.setRange(10.0, 200000.0)
         self.exposure_spin.setValue(20000.0)
@@ -523,8 +550,6 @@ class CameraControlPanel(QtWidgets.QGroupBox):
 
         layout = QtWidgets.QVBoxLayout()
         layout.addLayout(run_layout)
-        layout.addWidget(QtWidgets.QLabel("鼠标模式"))
-        layout.addWidget(self.mode_combo)
         layout.addLayout(exposure_layout)
         layout.addWidget(self.reset_view_button)
         layout.addWidget(self.save_roi_checkbox)
