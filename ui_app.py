@@ -10,7 +10,7 @@ from PIL import Image
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from calibrate_insitu import CameraGX, MockCamera, MockSLM2, SLM1Controller, SLM2Controller
-from ui.phase_utils import compose_layers, load_phase_file, make_preview_image
+from ui.phase_utils import apply_compensation, compose_layers, load_compensation, load_phase_file, make_preview_image
 from ui.widgets import (
     CameraControlPanel,
     ImageSourcePanel,
@@ -38,6 +38,26 @@ class MockSLM1:
 
     def display_gray(self, img_u8: np.ndarray, use_comp: bool = True) -> None:
         self.last_image = img_u8
+
+
+class CameraViewBox(pg.ViewBox):
+    select_drag = QtCore.pyqtSignal(QtCore.QPointF, QtCore.QPointF, bool)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._mode = "pan"
+
+    def set_mode(self, mode: str) -> None:
+        self._mode = mode
+
+    def mouseDragEvent(self, ev, axis=None):
+        if self._mode == "select" and ev.button() == QtCore.Qt.MouseButton.LeftButton:
+            ev.accept()
+            start = ev.buttonDownScenePos()
+            end = ev.scenePos()
+            self.select_drag.emit(start, end, ev.isFinish())
+            return
+        super().mouseDragEvent(ev, axis=axis)
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -151,7 +171,8 @@ class MainWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(group)
 
         self.plot_widget = pg.GraphicsLayoutWidget()
-        self.view_box = self.plot_widget.addViewBox(lockAspect=True)
+        self.view_box = CameraViewBox()
+        self.plot_widget.addItem(self.view_box)
         self._pan_mode = getattr(getattr(pg.ViewBox, "MouseMode", None), "PanMode", None)
         if self._pan_mode is None:
             self._pan_mode = getattr(pg.ViewBox, "PanMode", None)
@@ -160,6 +181,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._rect_mode = getattr(pg.ViewBox, "RectMode", None)
         if self._pan_mode is not None:
             self.view_box.setMouseMode(self._pan_mode)
+        self.view_box.set_mode("pan")
         self.image_item = pg.ImageItem()
         self.view_box.addItem(self.image_item)
         self.view_box.setBackgroundColor("k")
@@ -174,6 +196,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view_box.addItem(self.roi)
         self.roi.sigRegionChanged.connect(self.update_roi_stats)
         self.roi.sigRegionChangeFinished.connect(self.on_roi_changed)
+        self.view_box.select_drag.connect(self.on_camera_select_drag)
 
         self.plot_widget.scene().sigMouseMoved.connect(self.on_mouse_moved)
 
@@ -522,8 +545,6 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as exc:
             self.log(f"SLM2 合成失败: {exc}")
             return
-        self._latest_slm2_loaded_phase = phase
-
         if self.slm2_worker is None:
             self.log("SLM2 未初始化，请先 Run")
             self.update_preview()
@@ -531,6 +552,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         use_comp = self.slm2_panel.slm2_comp_checkbox.isChecked()
         comp_path = self.slm2_panel.slm2_comp_edit.text().strip()
+        preview_phase = phase
+        if use_comp and comp_path:
+            comp = load_compensation(comp_path, phase.shape, meaning="encoded_0_255")
+            preview_phase = apply_compensation(phase, comp)
+        self._latest_slm2_loaded_phase = preview_phase
 
         QtCore.QMetaObject.invokeMethod(
             self.slm2_worker,
@@ -686,13 +712,27 @@ class MainWindow(QtWidgets.QMainWindow):
         mode = self.camera_control.mode_combo.currentData() or "pan"
         if mode == "select":
             self.roi.setVisible(True)
+            self.view_box.set_mode("select")
             if self._rect_mode is not None:
                 self.view_box.setMouseMode(self._rect_mode)
             self.on_roi_changed()
         else:
             self.roi.setVisible(False)
+            self.view_box.set_mode("pan")
             if self._pan_mode is not None:
                 self.view_box.setMouseMode(self._pan_mode)
+
+    def on_camera_select_drag(self, start: QtCore.QPointF, end: QtCore.QPointF, finished: bool) -> None:
+        p1 = self.view_box.mapSceneToView(start)
+        p2 = self.view_box.mapSceneToView(end)
+        x0, x1 = sorted([p1.x(), p2.x()])
+        y0, y1 = sorted([p1.y(), p2.y()])
+        if x1 - x0 <= 1 or y1 - y0 <= 1:
+            return
+        self.roi.setPos((x0, y0))
+        self.roi.setSize((x1 - x0, y1 - y0))
+        if finished:
+            self.on_roi_changed()
 
     def _crop_to_roi(self, img: np.ndarray) -> np.ndarray:
         roi_bounds = self.roi.parentBounds()

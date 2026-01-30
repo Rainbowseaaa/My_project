@@ -237,6 +237,8 @@ def load_field_file(path: str, shape: Tuple[int, int]) -> Tuple[np.ndarray, np.n
 
 
 def generate_lg_field(shape: Tuple[int, int], w0: float, p: int, l: int) -> Tuple[np.ndarray, np.ndarray]:
+    from functions import OAM_gen
+
     height, width = shape
     yy, xx = np.mgrid[0:height, 0:width]
     cx = width / 2
@@ -244,18 +246,14 @@ def generate_lg_field(shape: Tuple[int, int], w0: float, p: int, l: int) -> Tupl
     x = xx - cx
     y = yy - cy
     r = np.sqrt(x ** 2 + y ** 2)
-    theta = np.arctan2(y, x)
-    rho = np.sqrt(2) * r / max(w0, 1e-6)
-    try:
-        from scipy.special import genlaguerre
-
-        lag = genlaguerre(p, abs(l))(rho ** 2)
-    except Exception:
-        lag = np.ones_like(rho)
-    amp = (rho ** abs(l)) * lag * np.exp(-(rho ** 2) / 2)
-    amp = amp / (np.max(amp) + 1e-9)
-    phase = l * theta
-    return amp.astype(np.float64), phase.astype(np.float64)
+    phi = np.arctan2(y, x)
+    w0_px = max(float(w0), 1e-6)
+    wavelength = 1.0
+    zR = np.pi * w0_px ** 2 / wavelength
+    field = OAM_gen.LG_beam(r, phi, wavelength, w0_px, zR, 0.0, [int(l)], [int(p)], norm=True)
+    amp = np.abs(field).astype(np.float64)
+    phase = np.angle(field).astype(np.float64)
+    return amp, phase
 
 
 def render_letter_field(shape: Tuple[int, int], letter: str) -> Tuple[np.ndarray, np.ndarray]:
@@ -269,11 +267,14 @@ def render_letter_field(shape: Tuple[int, int], letter: str) -> Tuple[np.ndarray
     except Exception:
         font = ImageFont.load_default()
     text = (letter or "A")[0]
-    bbox = draw.textbbox((0, 0), text, font=font)
-    text_w = bbox[2] - bbox[0]
-    text_h = bbox[3] - bbox[1]
-    pos = ((width - text_w) // 2, (height - text_h) // 2)
-    draw.text(pos, text, fill=255, font=font)
+    try:
+        draw.text((width / 2, height / 2), text, fill=255, font=font, anchor="mm")
+    except TypeError:
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+        pos = ((width - text_w) // 2, (height - text_h) // 2)
+        draw.text(pos, text, fill=255, font=font)
     amp = np.asarray(img, dtype=np.float64) / 255.0
     phase = np.zeros_like(amp)
     return amp, phase
