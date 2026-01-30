@@ -17,13 +17,19 @@ slm1:
 
 slm2:
   compensation_path: ""  # SLM2 面型补偿文件 (png/bmp)
+  sdk_path: ""  # HEDS SDK 路径（若 HEDS 模块不在环境中，请填此项）
   pixel_pitch_x_m: 8.0e-6
   pixel_pitch_y_m: 8.0e-6
   block_mode: "checkerboard"  # checkerboard 或 blaze
 
 calibration:
   lambda_m: 5.32e-7
-  n_layers: 5
+  n_layers: 4
+  initial_centers:
+    - [240, 540]
+    - [720, 540]
+    - [1200, 540]
+    - [1680, 540]
   window:
     shape: "circle"  # circle 或 square
     size_px: 40
