@@ -8,6 +8,7 @@ import argparse
 import json
 import math
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -51,6 +52,125 @@ def load_config(path: str) -> Dict:
 
 def ensure_dir(path: str) -> None:
     Path(path).mkdir(parents=True, exist_ok=True)
+
+
+def import_heds(config: Dict):
+    from importlib import import_module, util
+
+    if util.find_spec("HEDS") is None:
+        repo_root = Path(__file__).resolve().parent
+        candidates = [
+            config.get("sdk_path"),
+            str(repo_root / "SLM Display SDK (Python) v4.1.0 Examples"),
+        ]
+        for candidate in candidates:
+            if not candidate:
+                continue
+            candidate_path = str(Path(candidate).expanduser().resolve())
+            if candidate_path not in sys.path:
+                sys.path.insert(0, candidate_path)
+
+    if util.find_spec("HEDS") is None:
+        raise ModuleNotFoundError(
+            "未找到 HEDS 模块，请确认 SLM Display SDK 已安装或在 config.yaml 的 slm2.sdk_path 中指定路径。"
+        )
+
+    return import_module("HEDS")
+
+
+def build_schematic(slm2_shape: Tuple[int, int], centers: List[Tuple[int, int]],
+                    current_center: Optional[Tuple[int, int]], size_px: int,
+                    shape_type: str) -> np.ndarray:
+    height, width = slm2_shape
+    schematic = np.zeros((height, width), dtype=np.float32)
+    for center in centers:
+        mask = window_mask(slm2_shape, center, size_px, shape_type)
+        schematic[mask] = 0.6
+    if current_center is not None:
+        mask = window_mask(slm2_shape, current_center, size_px, shape_type)
+        schematic[mask] = 1.0
+    return np.clip(schematic * 255, 0, 255).astype(np.uint8)
+
+
+class CalibrationVisualizer:
+    def __init__(self, slm2_shape: Tuple[int, int]):
+        try:
+            from importlib import import_module
+
+            plt = import_module("matplotlib.pyplot")
+        except ModuleNotFoundError:
+            self.enabled = False
+            self.plt = None
+            return
+        self.enabled = True
+        self.plt = plt
+        plt.ion()
+        self.fig, self.axes = plt.subplots(2, 2, figsize=(10, 8))
+        self.fig.suptitle("Calibration Monitor")
+        self.ax_schematic = self.axes[0, 0]
+        self.ax_camera = self.axes[0, 1]
+        self.ax_heatmap = self.axes[1, 0]
+        self.ax_text = self.axes[1, 1]
+        self.ax_text.axis("off")
+        self._schematic_im = None
+        self._camera_im = None
+        self._heatmap_im = None
+        self._status_text = None
+        self.slm2_shape = slm2_shape
+
+    def update_status(self, message: str) -> None:
+        if not self.enabled:
+            return
+        if self._status_text is None:
+            self._status_text = self.ax_text.text(0.0, 1.0, message, va="top", ha="left")
+        else:
+            self._status_text.set_text(message)
+
+    def update_schematic(self, image: np.ndarray) -> None:
+        if not self.enabled:
+            return
+        if self._schematic_im is None:
+            self._schematic_im = self.ax_schematic.imshow(image, cmap="gray")
+            self.ax_schematic.set_title("SLM2 Window Schematic")
+        else:
+            self._schematic_im.set_data(image)
+
+    def update_camera(self, image: np.ndarray) -> None:
+        if not self.enabled:
+            return
+        if self._camera_im is None:
+            self._camera_im = self.ax_camera.imshow(image, cmap="gray")
+            self.ax_camera.set_title("Camera Frame")
+        else:
+            self._camera_im.set_data(image)
+
+    def update_heatmap(self, heatmap: np.ndarray) -> None:
+        if not self.enabled:
+            return
+        if self._heatmap_im is None:
+            self._heatmap_im = self.ax_heatmap.imshow(heatmap, cmap="inferno")
+            self.ax_heatmap.set_title("Scan Heatmap")
+        else:
+            self._heatmap_im.set_data(heatmap)
+        self._heatmap_im.autoscale()
+
+    def refresh(self) -> None:
+        if not self.enabled:
+            return
+        self.fig.canvas.draw_idle()
+        self.plt.pause(0.001)
+
+
+def ensure_hardware_imports(config: Dict) -> None:
+    slm2_cfg = config.get("slm2", {})
+    if slm2_cfg:
+        import_heds(slm2_cfg)
+    try:
+        from UPO_SLM_80Rplus.SLM_UPOLabs import SLM_UP  # noqa: F401
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "未找到 SLM1 SDK，请确认 UPO_SLM_80Rplus 已安装或路径已加入 PYTHONPATH。"
+        ) from exc
 
 
 def roi_from_dict(data: Dict) -> ROI:
@@ -245,8 +365,8 @@ class SLM1Controller:
         self.output_dir = output_dir
         ensure_dir(str(self.output_dir))
 
-    def display_gray(self, img_u8: np.ndarray) -> None:
-        if self.comp_u8 is not None:
+    def display_gray(self, img_u8: np.ndarray, use_comp: bool = True) -> None:
+        if use_comp and self.comp_u8 is not None:
             img_u8 = ((img_u8.astype(np.uint16) + self.comp_u8.astype(np.uint16)) % 256).astype(np.uint8)
         img = Image.fromarray(img_u8)
         path = self.output_dir / "slm1_temp.bmp"
@@ -259,9 +379,7 @@ class SLM1Controller:
 
 class SLM2Controller:
     def __init__(self, config: Dict, output_dir: Path):
-        from importlib import import_module
-
-        heds = import_module("HEDS")
+        heds = import_heds(config)
         self.heds = heds
         self.output_dir = output_dir
         ensure_dir(str(self.output_dir))
@@ -278,16 +396,17 @@ class SLM2Controller:
         self.height = self.slm.height_px()
         self.comp = load_compensation(config.get("compensation_path", ""), (self.height, self.width))
 
-    def display_phase(self, phase: np.ndarray) -> None:
-        phase = apply_compensation(phase, self.comp)
+    def display_phase(self, phase: np.ndarray, use_comp: bool = True) -> None:
+        if use_comp:
+            phase = apply_compensation(phase, self.comp)
         img_u8 = phase_to_uint8(phase)
         img = Image.fromarray(img_u8)
         path = self.output_dir / "slm2_temp.bmp"
         img.save(path)
-        if hasattr(self.slm, "showDataFromImageFile"):
-            err = self.slm.showDataFromImageFile(str(path))
-        elif hasattr(self.slm, "showCGHFromImageFile"):
+        if hasattr(self.slm, "showCGHFromImageFile"):
             err = self.slm.showCGHFromImageFile(str(path))
+        elif hasattr(self.slm, "showDataFromImageFile"):
+            err = self.slm.showDataFromImageFile(str(path))
         else:
             raise RuntimeError("未找到可用的 SLM2 显示接口")
         if err != self.heds.HEDSERR_NoError:
@@ -311,7 +430,9 @@ def build_scan_positions(roi: ROI, step: int) -> Tuple[List[int], List[int]]:
 
 def scan_layer(camera: CameraBase, slm2, layer_idx: int, centers: List[Tuple[int, int]],
                roi: ROI, config: Dict, slm2_shape: Tuple[int, int], block_mode: str,
-               output_dir: Path, mock_cam: Optional[MockCamera]) -> Tuple[int, int]:
+               output_dir: Path, mock_cam: Optional[MockCamera],
+               visualizer: Optional[CalibrationVisualizer] = None,
+               update_every: int = 1) -> Tuple[int, int]:
     win_cfg = config["window"]
     shape_type = win_cfg["shape"]
     size_px = int(win_cfg["size_px"])
@@ -324,6 +445,8 @@ def scan_layer(camera: CameraBase, slm2, layer_idx: int, centers: List[Tuple[int
 
     base_block = blocking_phase(slm2_shape, block_mode)
 
+    total_steps = len(xs) * len(ys)
+    step_idx = 0
     for yi, y in enumerate(ys):
         for xi, x in enumerate(xs):
             phase = np.array(base_block, copy=True)
@@ -337,6 +460,20 @@ def scan_layer(camera: CameraBase, slm2, layer_idx: int, centers: List[Tuple[int
                 mock_cam.update_window((x, y))
             img = camera.capture()
             heatmap[yi, xi] = compute_metric(img, roi_cam, metric_type)
+            if visualizer is not None and (step_idx % update_every == 0):
+                dx = x - slm2_shape[1] // 2
+                dy = y - slm2_shape[0] // 2
+                schematic = build_schematic(slm2_shape, centers, (x, y), size_px, shape_type)
+                visualizer.update_status(
+                    f"Layer {layer_idx} scan\n"
+                    f"center=({x}, {y}) dx={dx} dy={dy}\n"
+                    f"step {step_idx + 1}/{total_steps}"
+                )
+                visualizer.update_schematic(schematic)
+                visualizer.update_camera(img)
+                visualizer.update_heatmap(heatmap)
+                visualizer.refresh()
+            step_idx += 1
 
     best_idx = np.unravel_index(np.argmax(heatmap), heatmap.shape)
     best_y = ys[best_idx[0]]
@@ -385,19 +522,31 @@ def scan_layer(camera: CameraBase, slm2, layer_idx: int, centers: List[Tuple[int
     (output_dir / f"layer_{layer_idx:02d}_meta.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+    if visualizer is not None:
+        dx = best_x - slm2_shape[1] // 2
+        dy = best_y - slm2_shape[0] // 2
+        schematic = build_schematic(slm2_shape, centers, (best_x, best_y), size_px, shape_type)
+        visualizer.update_status(
+            f"Layer {layer_idx} best\n"
+            f"center=({best_x}, {best_y}) dx={dx} dy={dy}"
+        )
+        visualizer.update_schematic(schematic)
+        visualizer.update_heatmap(heatmap)
+        visualizer.refresh()
     return best_x, best_y
 
 
 def measure_focus(camera: CameraBase, slm2, layer_idx: int, center: Tuple[int, int],
-                  centers: List[Tuple[int, int]], config: Dict, slm2_shape: Tuple[int, int],
-                  block_mode: str,
-                  output_dir: Path, mock_cam: Optional[MockCamera]) -> Tuple[float, List[Tuple[float, float]]]:
+                  centers: List[Tuple[int, int]], config: Dict, slm2_cfg: Dict,
+                  slm2_shape: Tuple[int, int], block_mode: str,
+                  output_dir: Path, mock_cam: Optional[MockCamera],
+                  visualizer: Optional[CalibrationVisualizer] = None) -> Tuple[float, List[Tuple[float, float]]]:
     roi_focus = roi_from_dict(config["roi_focus"])
     metric_type = config["focus_metric"]["type"]
     f_list = [float(f) for f in config["f_list_m"]]
     pixel_pitch = (
-        float(config["pixel_pitch_x_m"]),
-        float(config["pixel_pitch_y_m"]),
+        float(slm2_cfg["pixel_pitch_x_m"]),
+        float(slm2_cfg["pixel_pitch_y_m"]),
     )
     win_cfg = config["window"]
     shape_type = win_cfg["shape"]
@@ -423,6 +572,18 @@ def measure_focus(camera: CameraBase, slm2, layer_idx: int, center: Tuple[int, i
         img = camera.capture()
         metric = focus_metric(img, roi_focus, metric_type)
         curves.append((f, metric))
+        if visualizer is not None:
+            dx = center[0] - slm2_shape[1] // 2
+            dy = center[1] - slm2_shape[0] // 2
+            schematic = build_schematic(slm2_shape, centers, center, size_px, shape_type)
+            visualizer.update_status(
+                f"Layer {layer_idx} focus\n"
+                f"center=({center[0]}, {center[1]}) dx={dx} dy={dy}\n"
+                f"f={f:.4f} metric={metric:.4f}"
+            )
+            visualizer.update_schematic(schematic)
+            visualizer.update_camera(img)
+            visualizer.refresh()
 
         if metric_type == "second_moment":
             if best_metric is None or metric < best_metric:
@@ -455,7 +616,7 @@ def auto_roi(center: Tuple[int, int], half_size: int, slm2_shape: Tuple[int, int
     )
 
 
-def run_calibration(config: Dict, mock: bool) -> None:
+def run_calibration(config: Dict, mock: bool, visualize: bool = False) -> None:
     output_cfg = config["output"]
     ensure_dir(output_cfg["scan_maps_dir"])
     ensure_dir(output_cfg["focus_curves_dir"])
@@ -469,10 +630,16 @@ def run_calibration(config: Dict, mock: bool) -> None:
         camera = MockCamera(config["mock"], slm2_shape, config["mock"].get("noise_std", 5.0))
         slm1 = None
     else:
+        ensure_hardware_imports(config)
         slm1 = SLM1Controller(config["slm1"], slm1_temp_dir)
         slm2 = SLM2Controller(config["slm2"], slm2_temp_dir)
         slm2_shape = (slm2.height, slm2.width)
         camera = CameraGX(config["camera"])
+
+    visualizer = CalibrationVisualizer(slm2_shape) if visualize else None
+    if visualize and visualizer is not None and not visualizer.enabled:
+        print("未检测到 matplotlib，已跳过可视化显示。")
+        visualizer = None
 
     try:
         if slm1 is not None:
@@ -510,6 +677,8 @@ def run_calibration(config: Dict, mock: bool) -> None:
                 block_mode,
                 Path(output_cfg["scan_maps_dir"]),
                 camera if isinstance(camera, MockCamera) else None,
+                visualizer,
+                max(1, int(config["calibration"].get("visualize_every", 1))),
             )
             centers.append((best_x, best_y))
 
@@ -523,10 +692,12 @@ def run_calibration(config: Dict, mock: bool) -> None:
                 center,
                 centers[:layer_i],
                 config["calibration"],
+                config["slm2"],
                 slm2_shape,
                 block_mode,
                 Path(output_cfg["focus_curves_dir"]),
                 camera if isinstance(camera, MockCamera) else None,
+                visualizer,
             )
             layers_result.append({
                 "i": layer_i,
@@ -580,6 +751,7 @@ def main() -> None:
     parser.add_argument("--config", default="config.yaml", help="配置文件路径")
     parser.add_argument("--mock", action="store_true", help="使用模拟数据运行")
     parser.add_argument("--check-devices", action="store_true", help="单独验证设备控制")
+    parser.add_argument("--visualize", action="store_true", help="显示校准过程可视化窗口")
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -589,9 +761,9 @@ def main() -> None:
         return
 
     if args.mock:
-        run_calibration(config, mock=True)
+        run_calibration(config, mock=True, visualize=args.visualize)
     else:
-        run_calibration(config, mock=False)
+        run_calibration(config, mock=False, visualize=args.visualize)
 
 
 if __name__ == "__main__":
