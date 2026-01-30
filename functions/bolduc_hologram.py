@@ -1,5 +1,4 @@
 import numpy as np
-import matplotlib.pyplot as plt
 from functions import OAM_gen as LG
 import torch
 import scipy.interpolate as interp
@@ -52,6 +51,7 @@ def bolduc_phase_encoding(amplitude, phase, period):
 
 
 if __name__ == '__main__':
+    import matplotlib.pyplot as plt
     tar = target_field(l=[1], p=[0], Nx=1920, Ny=1200, w0=12e-4, dx=8e-6)
     tar_amp = np.abs(tar)
     tar_pha = np.angle(tar)
