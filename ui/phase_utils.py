@@ -280,6 +280,42 @@ def render_letter_field(shape: Tuple[int, int], letter: str) -> Tuple[np.ndarray
     return amp, phase
 
 
+def resize_and_embed(
+    amp: np.ndarray,
+    phase: np.ndarray,
+    slm_shape: Tuple[int, int],
+    target_size: Tuple[int, int] | None,
+) -> Tuple[np.ndarray, np.ndarray]:
+    if target_size is None:
+        target_w, target_h = amp.shape[1], amp.shape[0]
+    else:
+        target_w, target_h = target_size
+        if target_w <= 0 or target_h <= 0:
+            target_w, target_h = amp.shape[1], amp.shape[0]
+    target_w = int(target_w)
+    target_h = int(target_h)
+    if (target_h, target_w) == amp.shape and amp.shape == slm_shape:
+        return amp, phase
+    amp_img = Image.fromarray(amp.astype(np.float32))
+    amp_img = amp_img.resize((target_w, target_h), Image.BILINEAR)
+    phase_img = Image.fromarray(phase.astype(np.float32))
+    phase_img = phase_img.resize((target_w, target_h), Image.BILINEAR)
+    amp_resized = np.asarray(amp_img, dtype=np.float64)
+    phase_resized = np.asarray(phase_img, dtype=np.float64)
+
+    base_amp = np.zeros(slm_shape, dtype=np.float64)
+    base_phase = np.zeros(slm_shape, dtype=np.float64)
+    top = max((slm_shape[0] - target_h) // 2, 0)
+    left = max((slm_shape[1] - target_w) // 2, 0)
+    bottom = min(top + target_h, slm_shape[0])
+    right = min(left + target_w, slm_shape[1])
+    amp_crop = amp_resized[:bottom - top, :right - left]
+    phase_crop = phase_resized[:bottom - top, :right - left]
+    base_amp[top:bottom, left:right] = amp_crop
+    base_phase[top:bottom, left:right] = phase_crop
+    return base_amp, base_phase
+
+
 def _download_file(url: str, dest: Path) -> None:
     import urllib.request
 

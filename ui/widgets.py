@@ -299,6 +299,12 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.letter_edit = QtWidgets.QLineEdit("A")
         self.dataset_index_spin = QtWidgets.QSpinBox()
         self.dataset_index_spin.setRange(0, 9999)
+        self.field_width_spin = QtWidgets.QSpinBox()
+        self.field_width_spin.setRange(0, 4000)
+        self.field_width_spin.setValue(0)
+        self.field_height_spin = QtWidgets.QSpinBox()
+        self.field_height_spin.setRange(0, 4000)
+        self.field_height_spin.setValue(0)
 
         self.play_mode_combo = QtWidgets.QComboBox()
         self.play_mode_combo.addItem("单帧", userData="single")
@@ -363,6 +369,12 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         gen_layout.addWidget(QtWidgets.QLabel("光场类型"), 0, 0)
         gen_layout.addWidget(self.field_mode_combo, 0, 1)
         gen_layout.addWidget(self.field_stack, 1, 0, 1, 2)
+        size_layout = QtWidgets.QHBoxLayout()
+        size_layout.addWidget(QtWidgets.QLabel("宽(px)"))
+        size_layout.addWidget(self.field_width_spin)
+        size_layout.addWidget(QtWidgets.QLabel("高(px)"))
+        size_layout.addWidget(self.field_height_spin)
+        gen_layout.addLayout(size_layout, 2, 0, 1, 2)
         gen_widget = QtWidgets.QWidget()
         gen_widget.setLayout(gen_layout)
 
@@ -449,13 +461,19 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         mode = self.field_mode_combo.currentData() or "lg"
         if mode == "lg":
             index = 0
+            enable_size = False
         elif mode == "letter":
             index = 1
+            enable_size = True
         elif mode in {"mnist", "fashion_mnist"}:
             index = 2
+            enable_size = True
         else:
             index = 0
+            enable_size = False
         self.field_stack.setCurrentIndex(index)
+        self.field_width_spin.setEnabled(enable_size)
+        self.field_height_spin.setEnabled(enable_size)
 
 
 class SLM2Panel(QtWidgets.QGroupBox):

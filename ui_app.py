@@ -522,12 +522,13 @@ class MainWindow(QtWidgets.QMainWindow):
         use_comp = self.image_panel.slm1_comp_checkbox.isChecked()
         comp_path = self.image_panel.slm1_comp_edit.text().strip()
         field_params = {
-            "mode": self.image_panel.field_mode_combo.currentData(),
+            "mode": "file" if (load_mode == "file" and input_type == "field") else self.image_panel.field_mode_combo.currentData(),
             "w0": self.image_panel.lg_w0_spin.value(),
             "p": self.image_panel.lg_p_spin.value(),
             "l": self.image_panel.lg_l_spin.value(),
             "letter": self.image_panel.letter_edit.text().strip(),
             "index": self.image_panel.dataset_index_spin.value(),
+            "size": (self.image_panel.field_width_spin.value(), self.image_panel.field_height_spin.value()),
             "data_dir": self.config.get("datasets", {}).get("mnist_dir", "data/mnist"),
         }
         QtCore.QMetaObject.invokeMethod(
@@ -728,7 +729,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self.view_box.set_mode("select")
             if self._rect_mode is not None:
                 self.view_box.setMouseMode(self._rect_mode)
-            self.on_roi_changed()
         else:
             self.roi.setVisible(False)
             self.view_box.set_mode("pan")
