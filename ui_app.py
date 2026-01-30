@@ -139,7 +139,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.stop_record_button.clicked.connect(self.stop_recording)
         self.camera_control.run_button.clicked.connect(self.start_camera)
         self.camera_control.stop_button.clicked.connect(self.stop_camera)
-        self.camera_control.reset_view_button.clicked.connect(self.reset_camera_view)
         self.camera_control.apply_exposure_button.clicked.connect(self.apply_exposure)
 
         left_layout = QtWidgets.QVBoxLayout()
@@ -183,8 +182,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.camera_mode_button.setToolTip("拖动/框选切换")
         self.camera_mode_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowForward))
         self.camera_mode_button.clicked.connect(self.toggle_camera_mode)
+        self.camera_zoom_button = QtWidgets.QToolButton()
+        self.camera_zoom_button.setToolTip("缩放到 ROI")
+        self.camera_zoom_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogZoomButton))
+        self.camera_zoom_button.clicked.connect(self.zoom_to_roi)
+        self.camera_reset_button = QtWidgets.QToolButton()
+        self.camera_reset_button.setToolTip("视图复位")
+        self.camera_reset_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_BrowserReload))
+        self.camera_reset_button.clicked.connect(self.reset_camera_view)
         self.camera_toolbar.addStretch(1)
         self.camera_toolbar.addWidget(self.camera_mode_button)
+        self.camera_toolbar.addWidget(self.camera_zoom_button)
+        self.camera_toolbar.addWidget(self.camera_reset_button)
         layout.addLayout(self.camera_toolbar)
         self.view_box = CameraViewBox()
         self.plot_widget.addItem(self.view_box)
@@ -711,8 +720,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def on_roi_changed(self) -> None:
         if self.image_item.image is None:
             return
-        roi_bounds = self.roi.parentBounds()
-        self.view_box.setRange(roi_bounds, padding=0.05)
+        self.update_roi_stats()
 
     def reset_camera_view(self) -> None:
         if self.image_item.image is None:
@@ -721,6 +729,14 @@ class MainWindow(QtWidgets.QMainWindow):
         img = self.image_item.image
         rect = QtCore.QRectF(0, 0, img.shape[1], img.shape[0])
         self.view_box.setRange(rect, padding=0.05)
+
+    def zoom_to_roi(self) -> None:
+        if self.image_item.image is None:
+            return
+        roi_bounds = self.roi.parentBounds()
+        if roi_bounds.width() <= 1 or roi_bounds.height() <= 1:
+            return
+        self.view_box.setRange(roi_bounds, padding=0.05)
 
     def on_camera_mode_changed(self) -> None:
         mode = "select" if self.camera_mode_button.isChecked() else "pan"
