@@ -15,7 +15,6 @@ from ui.widgets import (
     CameraControlPanel,
     ImageSourcePanel,
     LogPanel,
-    PlayerControls,
     PreviewPanel,
     RoiStatsPanel,
     SLMPreviewPanel,
@@ -74,7 +73,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(central)
 
         self.image_panel = ImageSourcePanel()
-        self.player_controls = PlayerControls()
         self.slm2_panel = SLM2Panel()
         self.preview_panel = PreviewPanel()
         self.slm1_preview = SLMPreviewPanel("SLM1 预览")
@@ -90,14 +88,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.roi_panel = RoiStatsPanel()
 
-        self.image_panel.generate_button.clicked.connect(self.generate_hologram)
-        self.image_panel.load_button.clicked.connect(self.load_slm1)
+        self.image_panel.single_button.clicked.connect(self.show_single_frame)
+        self.image_panel.play_button.clicked.connect(self.start_playback)
+        self.image_panel.stop_play_button.clicked.connect(self.pause_playback)
+        self.image_panel.prev_button.clicked.connect(self.show_prev_image)
+        self.image_panel.next_button.clicked.connect(self.show_next_image)
         self.image_panel.run_button.clicked.connect(self.start_slm1)
         self.image_panel.stop_button.clicked.connect(self.stop_slm1)
-        self.player_controls.play_clicked.connect(self.start_playback)
-        self.player_controls.pause_clicked.connect(self.pause_playback)
-        self.player_controls.prev_clicked.connect(self.show_prev_image)
-        self.player_controls.next_clicked.connect(self.show_next_image)
 
         for widget in self.slm2_panel.layer_widgets:
             widget.file_changed.connect(self.on_layer_change)
@@ -118,16 +115,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.camera_control.stop_button.clicked.connect(self.stop_camera)
         self.camera_control.reset_view_button.clicked.connect(self.reset_camera_view)
         self.camera_control.apply_exposure_button.clicked.connect(self.apply_exposure)
+        self.camera_control.mode_combo.currentIndexChanged.connect(self.on_camera_mode_changed)
 
         left_layout = QtWidgets.QVBoxLayout()
         left_layout.addWidget(self.image_panel)
-        left_layout.addWidget(self.player_controls)
-        left_layout.addWidget(self.slm1_preview)
-        left_layout.addWidget(self.log_panel)
+        left_layout.addWidget(self._build_left_split())
 
         center_layout = QtWidgets.QVBoxLayout()
-        center_layout.addWidget(self.slm2_panel)
-        center_layout.addWidget(self.preview_panel)
+        center_layout.addWidget(self._build_center_split())
 
         right_layout = QtWidgets.QVBoxLayout()
         right_layout.addWidget(self._build_camera_view())
@@ -157,11 +152,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.plot_widget = pg.GraphicsLayoutWidget()
         self.view_box = self.plot_widget.addViewBox(lockAspect=True)
-        pan_mode = getattr(getattr(pg.ViewBox, "MouseMode", None), "PanMode", None)
-        if pan_mode is None:
-            pan_mode = getattr(pg.ViewBox, "PanMode", None)
-        if pan_mode is not None:
-            self.view_box.setMouseMode(pan_mode)
+        self._pan_mode = getattr(getattr(pg.ViewBox, "MouseMode", None), "PanMode", None)
+        if self._pan_mode is None:
+            self._pan_mode = getattr(pg.ViewBox, "PanMode", None)
+        self._rect_mode = getattr(getattr(pg.ViewBox, "MouseMode", None), "RectMode", None)
+        if self._rect_mode is None:
+            self._rect_mode = getattr(pg.ViewBox, "RectMode", None)
+        if self._pan_mode is not None:
+            self.view_box.setMouseMode(self._pan_mode)
         self.image_item = pg.ImageItem()
         self.view_box.addItem(self.image_item)
         self.view_box.setBackgroundColor("k")
@@ -172,6 +170,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.roi.addScaleHandle([0, 1], [1, 0])
         self.roi.addScaleHandle([1, 1], [0, 0])
         self.roi.addTranslateHandle([0.5, 0.5])
+        self.roi.setVisible(False)
         self.view_box.addItem(self.roi)
         self.roi.sigRegionChanged.connect(self.update_roi_stats)
         self.roi.sigRegionChangeFinished.connect(self.on_roi_changed)
@@ -180,6 +179,22 @@ class MainWindow(QtWidgets.QMainWindow):
 
         layout.addWidget(self.plot_widget)
         return group
+
+    def _build_left_split(self) -> QtWidgets.QWidget:
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        splitter.addWidget(self.slm1_preview)
+        splitter.addWidget(self.log_panel)
+        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(1, 1)
+        return splitter
+
+    def _build_center_split(self) -> QtWidgets.QWidget:
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        splitter.addWidget(self.slm2_panel)
+        splitter.addWidget(self.preview_panel)
+        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(1, 1)
+        return splitter
 
     def _setup_threads(self) -> None:
         self.camera_thread = QtCore.QThread(self)
@@ -371,6 +386,10 @@ class MainWindow(QtWidgets.QMainWindow):
         event.accept()
 
     def _collect_image_paths(self) -> None:
+        if (self.image_panel.load_mode_combo.currentData() or "file") != "file":
+            self.image_paths = []
+            self.image_index = 0
+            return
         folder = self.image_panel.folder_edit.text().strip()
         image = self.image_panel.image_edit.text().strip()
         paths = []
@@ -384,6 +403,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.image_index = 0
 
     def start_playback(self) -> None:
+        if (self.image_panel.play_mode_combo.currentData() or "single") != "continuous":
+            return
+        if (self.image_panel.load_mode_combo.currentData() or "file") != "file":
+            self.log("连续播放仅支持文件模式")
+            return
         self._collect_image_paths()
         if not self.image_paths:
             self.log("未找到输入图像")
@@ -394,6 +418,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def pause_playback(self) -> None:
         self.timer.stop()
+
+    def show_single_frame(self) -> None:
+        self.pause_playback()
+        self.generate_hologram()
 
     def show_current_image(self) -> None:
         if not self.image_paths:
@@ -418,7 +446,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.image_paths:
             return
         if self.image_index >= len(self.image_paths) - 1:
-            if self.player_controls.loop_enabled():
+            if self.image_panel.loop_checkbox.isChecked():
                 self.image_index = 0
             else:
                 self.timer.stop()
@@ -428,30 +456,39 @@ class MainWindow(QtWidgets.QMainWindow):
         self.show_current_image()
 
     def generate_hologram(self) -> None:
-        input_type = self.image_panel.input_type_combo.currentData() or "hologram"
-        field_mode = self.image_panel.field_mode_combo.currentData()
-        if input_type == "field" and field_mode != "file":
-            pass
+        load_mode = self.image_panel.load_mode_combo.currentData() or "file"
+        if load_mode == "file":
+            input_type = self.image_panel.input_type_combo.currentData() or "hologram"
+            field_mode = self.image_panel.field_mode_combo.currentData()
+            if input_type == "field" and field_mode != "file":
+                pass
+            else:
+                if not self.image_paths:
+                    self._collect_image_paths()
+                if not self.image_paths:
+                    self.log("未选择输入图像")
+                    return
         else:
-            if not self.image_paths:
-                self._collect_image_paths()
-            if not self.image_paths:
-                self.log("未选择输入图像")
-                return
+            input_type = "field"
         if self.slm1_worker is None:
             self.log("SLM1 未初始化，请先 Run")
             return
         self.load_slm1()
 
     def load_slm1(self) -> None:
-        input_type = self.image_panel.input_type_combo.currentData() or "hologram"
-        field_mode = self.image_panel.field_mode_combo.currentData()
-        if input_type == "field" and field_mode != "file":
-            path = ""
+        load_mode = self.image_panel.load_mode_combo.currentData() or "file"
+        if load_mode == "file":
+            input_type = self.image_panel.input_type_combo.currentData() or "hologram"
+            field_mode = self.image_panel.field_mode_combo.currentData()
+            if input_type == "field" and field_mode != "file":
+                path = ""
+            else:
+                if not self.image_paths:
+                    return
+                path = str(self.image_paths[self.image_index])
         else:
-            if not self.image_paths:
-                return
-            path = str(self.image_paths[self.image_index])
+            input_type = "field"
+            path = ""
         use_comp = self.image_panel.slm1_comp_checkbox.isChecked()
         comp_path = self.image_panel.slm1_comp_edit.text().strip()
         field_params = {
@@ -644,6 +681,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def reset_camera_view(self) -> None:
         self.view_box.autoRange()
+
+    def on_camera_mode_changed(self) -> None:
+        mode = self.camera_control.mode_combo.currentData() or "pan"
+        if mode == "select":
+            self.roi.setVisible(True)
+            if self._rect_mode is not None:
+                self.view_box.setMouseMode(self._rect_mode)
+            self.on_roi_changed()
+        else:
+            self.roi.setVisible(False)
+            if self._pan_mode is not None:
+                self.view_box.setMouseMode(self._pan_mode)
 
     def _crop_to_roi(self, img: np.ndarray) -> np.ndarray:
         roi_bounds = self.roi.parentBounds()

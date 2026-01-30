@@ -456,7 +456,7 @@ class MockSLM2:
         self.height, self.width = config.get("slm2_size", [1200, 1920])
         self.last_phase = None
 
-    def display_phase(self, phase: np.ndarray) -> None:
+    def display_phase(self, phase: np.ndarray, use_comp: bool = False) -> None:
         self.last_phase = phase
 
     def display_gray(self, img_u8: np.ndarray, use_comp: bool = False) -> None:

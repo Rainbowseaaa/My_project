@@ -128,10 +128,8 @@ class PreviewPanel(QtWidgets.QGroupBox):
 
     def __init__(self, parent=None):
         super().__init__("SLM2 窗口示意", parent)
-        self.label = QtWidgets.QLabel()
-        self.label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.label = ZoomLabel()
         self.label.setMinimumSize(240, 160)
-        self.label.setStyleSheet("background-color: #222; border: 1px solid #444;")
 
         self.mode_combo = QtWidgets.QComboBox()
         self.mode_combo.addItem("显示加载结果", userData="loaded")
@@ -156,14 +154,45 @@ class PreviewPanel(QtWidgets.QGroupBox):
         return data if data else "loaded"
 
     def update_pixmap(self, pixmap: QtGui.QPixmap) -> None:
-        if pixmap is None:
+        self.label.set_base_pixmap(pixmap)
+
+
+class ZoomLabel(QtWidgets.QLabel):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._base_pixmap: QtGui.QPixmap | None = None
+        self._scale = 1.0
+        self.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.setStyleSheet("background-color: #222; border: 1px solid #444;")
+
+    def set_base_pixmap(self, pixmap: QtGui.QPixmap | None) -> None:
+        self._base_pixmap = pixmap
+        self._scale = 1.0
+        self._update_pixmap()
+
+    def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
+        if self._base_pixmap is None:
             return
-        scaled = pixmap.scaled(
-            self.label.size(),
+        delta = event.angleDelta().y()
+        factor = 1.1 if delta > 0 else 1 / 1.1
+        self._scale = max(0.1, min(5.0, self._scale * factor))
+        self._update_pixmap()
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._update_pixmap()
+
+    def _update_pixmap(self) -> None:
+        if self._base_pixmap is None:
+            self.clear()
+            return
+        target = self.size() * self._scale
+        scaled = self._base_pixmap.scaled(
+            target,
             QtCore.Qt.AspectRatioMode.KeepAspectRatio,
             QtCore.Qt.TransformationMode.SmoothTransformation,
         )
-        self.label.setPixmap(scaled)
+        self.setPixmap(scaled)
 
 
 class RoiStatsPanel(QtWidgets.QGroupBox):
@@ -240,14 +269,14 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.device_combo = QtWidgets.QComboBox()
         self.device_combo.addItem("UPO (1920x1200)", userData="upo")
         self.device_combo.addItem("Holoeye (1920x1080)", userData="holoeye")
+        self.load_mode_combo = QtWidgets.QComboBox()
+        self.load_mode_combo.addItem("文件", userData="file")
+        self.load_mode_combo.addItem("自动生成", userData="generate")
+
         self.image_edit = QtWidgets.QLineEdit()
         self.image_button = QtWidgets.QPushButton("选择单张图")
         self.folder_edit = QtWidgets.QLineEdit()
         self.folder_button = QtWidgets.QPushButton("选择文件夹")
-        self.interval_spin = QtWidgets.QSpinBox()
-        self.interval_spin.setRange(50, 5000)
-        self.interval_spin.setValue(500)
-        self.interval_spin.setSuffix(" ms")
 
         self.input_type_combo = QtWidgets.QComboBox()
         self.input_type_combo.addItem("全息图(直接加载)", userData="hologram")
@@ -272,8 +301,22 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.dataset_index_spin = QtWidgets.QSpinBox()
         self.dataset_index_spin.setRange(0, 9999)
 
-        self.generate_button = QtWidgets.QPushButton("生成全息图")
-        self.load_button = QtWidgets.QPushButton("加载到 SLM1")
+        self.play_mode_combo = QtWidgets.QComboBox()
+        self.play_mode_combo.addItem("单帧", userData="single")
+        self.play_mode_combo.addItem("连续", userData="continuous")
+        self.interval_spin = QtWidgets.QSpinBox()
+        self.interval_spin.setRange(50, 5000)
+        self.interval_spin.setValue(500)
+        self.interval_spin.setSuffix(" ms")
+
+        self.prev_button = QtWidgets.QPushButton("上一张")
+        self.next_button = QtWidgets.QPushButton("下一张")
+        self.loop_checkbox = QtWidgets.QCheckBox("循环")
+        self.loop_checkbox.setChecked(True)
+
+        self.single_button = QtWidgets.QPushButton("显示单帧")
+        self.play_button = QtWidgets.QPushButton("开始连续")
+        self.stop_play_button = QtWidgets.QPushButton("停止连续")
         self.run_button = QtWidgets.QPushButton("Run SLM1")
         self.stop_button = QtWidgets.QPushButton("Stop SLM1")
 
@@ -281,46 +324,65 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.slm1_comp_edit = QtWidgets.QLineEdit()
         self.slm1_comp_button = QtWidgets.QPushButton("选择补偿文件")
 
-        top_layout = QtWidgets.QGridLayout()
-        top_layout.addWidget(self.image_edit, 0, 0)
-        top_layout.addWidget(self.image_button, 0, 1)
-        top_layout.addWidget(self.folder_edit, 1, 0)
-        top_layout.addWidget(self.folder_button, 1, 1)
-        top_layout.addWidget(QtWidgets.QLabel("播放间隔"), 2, 0)
-        top_layout.addWidget(self.interval_spin, 2, 1)
-        top_layout.addWidget(QtWidgets.QLabel("输入类型"), 3, 0)
-        top_layout.addWidget(self.input_type_combo, 3, 1)
-        top_layout.addWidget(QtWidgets.QLabel("SLM1 类型"), 4, 0)
-        top_layout.addWidget(self.device_combo, 4, 1)
+        file_layout = QtWidgets.QGridLayout()
+        file_layout.addWidget(QtWidgets.QLabel("输入类型"), 0, 0)
+        file_layout.addWidget(self.input_type_combo, 0, 1)
+        file_layout.addWidget(self.image_edit, 1, 0)
+        file_layout.addWidget(self.image_button, 1, 1)
+        file_layout.addWidget(self.folder_edit, 2, 0)
+        file_layout.addWidget(self.folder_button, 2, 1)
+        file_layout.addWidget(self.prev_button, 3, 0)
+        file_layout.addWidget(self.next_button, 3, 1)
+        file_layout.addWidget(self.loop_checkbox, 4, 0)
+
+        file_widget = QtWidgets.QWidget()
+        file_widget.setLayout(file_layout)
+
+        gen_layout = QtWidgets.QGridLayout()
+        gen_layout.addWidget(QtWidgets.QLabel("光场类型"), 0, 0)
+        gen_layout.addWidget(self.field_mode_combo, 0, 1)
+        gen_layout.addWidget(QtWidgets.QLabel("LG w0"), 1, 0)
+        gen_layout.addWidget(self.lg_w0_spin, 1, 1)
+        gen_layout.addWidget(QtWidgets.QLabel("LG p"), 2, 0)
+        gen_layout.addWidget(self.lg_p_spin, 2, 1)
+        gen_layout.addWidget(QtWidgets.QLabel("LG l"), 3, 0)
+        gen_layout.addWidget(self.lg_l_spin, 3, 1)
+        gen_layout.addWidget(QtWidgets.QLabel("字母"), 4, 0)
+        gen_layout.addWidget(self.letter_edit, 4, 1)
+        gen_layout.addWidget(QtWidgets.QLabel("数据集索引"), 5, 0)
+        gen_layout.addWidget(self.dataset_index_spin, 5, 1)
+        gen_widget = QtWidgets.QWidget()
+        gen_widget.setLayout(gen_layout)
+
+        self.load_stack = QtWidgets.QStackedWidget()
+        self.load_stack.addWidget(file_widget)
+        self.load_stack.addWidget(gen_widget)
+
+        run_layout = QtWidgets.QHBoxLayout()
+        run_layout.addWidget(self.run_button)
+        run_layout.addWidget(self.stop_button)
+
+        play_layout = QtWidgets.QGridLayout()
+        play_layout.addWidget(QtWidgets.QLabel("播放模式"), 0, 0)
+        play_layout.addWidget(self.play_mode_combo, 0, 1)
+        play_layout.addWidget(QtWidgets.QLabel("播放间隔"), 1, 0)
+        play_layout.addWidget(self.interval_spin, 1, 1)
+        play_layout.addWidget(self.single_button, 2, 0)
+        play_layout.addWidget(self.play_button, 2, 1)
+        play_layout.addWidget(self.stop_play_button, 3, 1)
 
         comp_layout = QtWidgets.QHBoxLayout()
         comp_layout.addWidget(self.slm1_comp_checkbox)
         comp_layout.addWidget(self.slm1_comp_edit, 1)
         comp_layout.addWidget(self.slm1_comp_button)
 
-        field_layout = QtWidgets.QGridLayout()
-        field_layout.addWidget(QtWidgets.QLabel("光场类型"), 0, 0)
-        field_layout.addWidget(self.field_mode_combo, 0, 1)
-        field_layout.addWidget(QtWidgets.QLabel("LG w0"), 1, 0)
-        field_layout.addWidget(self.lg_w0_spin, 1, 1)
-        field_layout.addWidget(QtWidgets.QLabel("LG p"), 2, 0)
-        field_layout.addWidget(self.lg_p_spin, 2, 1)
-        field_layout.addWidget(QtWidgets.QLabel("LG l"), 3, 0)
-        field_layout.addWidget(self.lg_l_spin, 3, 1)
-        field_layout.addWidget(QtWidgets.QLabel("字母"), 4, 0)
-        field_layout.addWidget(self.letter_edit, 4, 1)
-        field_layout.addWidget(QtWidgets.QLabel("数据集索引"), 5, 0)
-        field_layout.addWidget(self.dataset_index_spin, 5, 1)
-
-        run_layout = QtWidgets.QHBoxLayout()
-        run_layout.addWidget(self.run_button)
-        run_layout.addWidget(self.stop_button)
-
         layout = QtWidgets.QVBoxLayout()
-        layout.addLayout(top_layout)
-        layout.addWidget(self.generate_button)
-        layout.addWidget(self.load_button)
-        layout.addLayout(field_layout)
+        layout.addWidget(QtWidgets.QLabel("加载模式"))
+        layout.addWidget(self.load_mode_combo)
+        layout.addWidget(self.load_stack)
+        layout.addLayout(play_layout)
+        layout.addWidget(QtWidgets.QLabel("SLM1 类型"))
+        layout.addWidget(self.device_combo)
         layout.addLayout(comp_layout)
         layout.addLayout(run_layout)
         self.setLayout(layout)
@@ -328,6 +390,10 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.image_button.clicked.connect(self._pick_image)
         self.folder_button.clicked.connect(self._pick_folder)
         self.slm1_comp_button.clicked.connect(self._pick_slm1_comp)
+        self.load_mode_combo.currentIndexChanged.connect(self._update_load_mode)
+        self.play_mode_combo.currentIndexChanged.connect(self._update_play_mode)
+        self._update_load_mode()
+        self._update_play_mode()
 
     def _pick_image(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -353,6 +419,17 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         )
         if path:
             self.slm1_comp_edit.setText(path)
+
+    def _update_load_mode(self) -> None:
+        index = 0 if self.load_mode_combo.currentData() == "file" else 1
+        self.load_stack.setCurrentIndex(index)
+
+    def _update_play_mode(self) -> None:
+        is_continuous = self.play_mode_combo.currentData() == "continuous"
+        self.interval_spin.setEnabled(is_continuous)
+        self.play_button.setEnabled(is_continuous)
+        self.stop_play_button.setEnabled(is_continuous)
+        self.single_button.setEnabled(not is_continuous)
 
 
 class SLM2Panel(QtWidgets.QGroupBox):
@@ -413,6 +490,9 @@ class CameraControlPanel(QtWidgets.QGroupBox):
         self.run_button = QtWidgets.QPushButton("Run 相机")
         self.stop_button = QtWidgets.QPushButton("Stop 相机")
         self.reset_view_button = QtWidgets.QPushButton("复位视图")
+        self.mode_combo = QtWidgets.QComboBox()
+        self.mode_combo.addItem("拖动", userData="pan")
+        self.mode_combo.addItem("框选", userData="select")
         self.exposure_spin = QtWidgets.QDoubleSpinBox()
         self.exposure_spin.setRange(10.0, 200000.0)
         self.exposure_spin.setValue(20000.0)
@@ -443,6 +523,8 @@ class CameraControlPanel(QtWidgets.QGroupBox):
 
         layout = QtWidgets.QVBoxLayout()
         layout.addLayout(run_layout)
+        layout.addWidget(QtWidgets.QLabel("鼠标模式"))
+        layout.addWidget(self.mode_combo)
         layout.addLayout(exposure_layout)
         layout.addWidget(self.reset_view_button)
         layout.addWidget(self.save_roi_checkbox)
@@ -454,21 +536,12 @@ class CameraControlPanel(QtWidgets.QGroupBox):
 class SLMPreviewPanel(QtWidgets.QGroupBox):
     def __init__(self, title: str, parent=None):
         super().__init__(title, parent)
-        self.label = QtWidgets.QLabel()
-        self.label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.label = ZoomLabel()
         self.label.setMinimumSize(200, 140)
-        self.label.setStyleSheet("background-color: #222; border: 1px solid #444;")
 
         layout = QtWidgets.QVBoxLayout()
         layout.addWidget(self.label)
         self.setLayout(layout)
 
     def update_pixmap(self, pixmap: QtGui.QPixmap) -> None:
-        if pixmap is None:
-            return
-        scaled = pixmap.scaled(
-            self.label.size(),
-            QtCore.Qt.AspectRatioMode.KeepAspectRatio,
-            QtCore.Qt.TransformationMode.SmoothTransformation,
-        )
-        self.label.setPixmap(scaled)
+        self.label.set_base_pixmap(pixmap)
