@@ -1,0 +1,47 @@
+slm1:
+  device_type: "upo"  # upo 或 holoeye
+  screen_num: 1
+  bolduc_period: 8
+  compensation_path: ""
+  play_interval_ms: 500
+  sdk_path: ""
+
+slm2:
+  device_type: "holoeye"  # upo 或 holoeye
+  compensation_path: ""
+  sdk_path: ""
+  screen_num: 2
+  block_mode: "checkerboard"
+  outside_mode: "zero"
+  window_size_px: [400, 400]
+  default_centers:
+    - [240, 540]
+    - [720, 540]
+    - [1200, 540]
+    - [1680, 540]
+  layers:
+    - {path: "", dx: 0, dy: 0, enabled: true}
+    - {path: "", dx: 0, dy: 0, enabled: true}
+    - {path: "", dx: 0, dy: 0, enabled: true}
+    - {path: "", dx: 0, dy: 0, enabled: true}
+  mat_key: "phase"
+
+camera:
+  device_sn: ""
+  exposure_us: 20000
+  gain: 0.0
+  avg_frames: 3
+  target_fps: 30
+  overexposure_threshold: 250
+  overexposure_ratio: 0.01
+  record_interval_ms: 200
+
+output:
+  slm1_tmp_dir: "output/slm1_tmp"
+  slm2_tmp_dir: "output/slm2_tmp"
+
+mock:
+  slm1_size: [1200, 1920]
+  slm2_size: [1200, 1920]
+  camera_size: [800, 800]
+  noise_std: 5.0
