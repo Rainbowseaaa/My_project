@@ -203,41 +203,63 @@ class MainWindow(QtWidgets.QMainWindow):
             self.slm2_controller = MockSLM2({"slm2_size": slm2_size})
             self.camera = MockCamera(self.config.get("mock", {}), slm2_size)
         else:
-            self.slm1_controller = SLM1Controller(self.config.get("slm1", {}), slm1_dir)
-            self.slm2_controller = SLM2Controller(self.config.get("slm2", {}), slm2_dir)
-            self.camera = CameraGX(self.config.get("camera", {}))
+            self.slm1_controller = None
+            self.slm2_controller = None
+            self.camera = None
+            try:
+                self.slm1_controller = SLM1Controller(self.config.get("slm1", {}), slm1_dir)
+            except Exception as exc:
+                self.log(f"SLM1 初始化失败: {exc}")
+            try:
+                self.slm2_controller = SLM2Controller(self.config.get("slm2", {}), slm2_dir)
+            except Exception as exc:
+                self.log(f"SLM2 初始化失败: {exc}")
+            try:
+                self.camera = CameraGX(self.config.get("camera", {}))
+            except Exception as exc:
+                self.log(f"相机初始化失败: {exc}")
 
     def _start_workers(self) -> None:
         self._init_hardware()
 
         slm1_period = int(self.config.get("slm1", {}).get("bolduc_period", 8))
-        slm1_shape = (self.slm1_controller.height, self.slm1_controller.width)
-        slm2_shape = (self.slm2_controller.height, self.slm2_controller.width)
+        self.camera_worker = None
+        self.slm1_worker = None
+        self.slm2_worker = None
 
-        self.camera_worker = CameraWorker(self.camera, self.config.get("camera", {}).get("target_fps", 30))
-        self.slm1_worker = SLM1Worker(self.slm1_controller, slm1_shape, slm1_period)
-        self.slm2_worker = SLM2Worker(self.slm2_controller, slm2_shape)
+        if self.camera is not None:
+            self.camera_worker = CameraWorker(self.camera, self.config.get("camera", {}).get("target_fps", 30))
+            self.camera_worker.moveToThread(self.camera_thread)
+            self.camera_thread.started.connect(self.camera_worker.start)
+            self.camera_worker.frame_ready.connect(self.update_frame)
+            self.camera_worker.error.connect(self.on_camera_error)
+            self.camera_thread.start()
+        else:
+            self.log("相机未初始化，跳过相机线程")
 
-        self.camera_worker.moveToThread(self.camera_thread)
-        self.slm1_worker.moveToThread(self.slm1_thread)
-        self.slm2_worker.moveToThread(self.slm2_thread)
+        if self.slm1_controller is not None:
+            slm1_shape = (self.slm1_controller.height, self.slm1_controller.width)
+            self.slm1_worker = SLM1Worker(self.slm1_controller, slm1_shape, slm1_period)
+            self.slm1_worker.moveToThread(self.slm1_thread)
+            self.slm1_worker.status.connect(self.on_slm1_status)
+            self.slm1_worker.error.connect(self.on_slm1_error)
+            self.slm1_thread.start()
+        else:
+            self.log("SLM1 未初始化，跳过 SLM1 线程")
 
-        self.camera_thread.started.connect(self.camera_worker.start)
-        self.camera_worker.frame_ready.connect(self.update_frame)
-        self.camera_worker.error.connect(self.on_camera_error)
-
-        self.slm1_worker.status.connect(self.on_slm1_status)
-        self.slm1_worker.error.connect(self.on_slm1_error)
-        self.slm2_worker.status.connect(self.on_slm2_status)
-        self.slm2_worker.error.connect(self.on_slm2_error)
-        self.slm2_worker.phase_ready.connect(self.on_slm2_phase_ready)
-
-        self.camera_thread.start()
-        self.slm1_thread.start()
-        self.slm2_thread.start()
+        if self.slm2_controller is not None:
+            slm2_shape = (self.slm2_controller.height, self.slm2_controller.width)
+            self.slm2_worker = SLM2Worker(self.slm2_controller, slm2_shape)
+            self.slm2_worker.moveToThread(self.slm2_thread)
+            self.slm2_worker.status.connect(self.on_slm2_status)
+            self.slm2_worker.error.connect(self.on_slm2_error)
+            self.slm2_worker.phase_ready.connect(self.on_slm2_phase_ready)
+            self.slm2_thread.start()
+        else:
+            self.log("SLM2 未初始化，跳过 SLM2 线程")
 
     def run_all(self) -> None:
-        if self.camera_thread.isRunning():
+        if self.camera_thread.isRunning() or self.slm1_thread.isRunning() or self.slm2_thread.isRunning():
             return
         self.log("启动运行流程")
         self._start_workers()
@@ -261,6 +283,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if self.camera is not None and hasattr(self.camera, "close"):
             self.camera.close()
+        if self.slm1_controller is not None and hasattr(self.slm1_controller, "close"):
+            self.slm1_controller.close()
+        if self.slm2_controller is not None and hasattr(self.slm2_controller, "close"):
+            self.slm2_controller.close()
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self.stop_all()
