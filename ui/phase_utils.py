@@ -190,3 +190,106 @@ def make_preview_image(
         painter.ellipse([cx_s - 3, cy_s - 3, cx_s + 3, cy_s + 3], outline=color, width=2)
 
     return img
+
+
+def load_hologram_file(path: str, shape: Tuple[int, int]) -> np.ndarray:
+    file_path = Path(path)
+    suffix = file_path.suffix.lower()
+    if suffix == ".npy":
+        data = np.load(file_path)
+        if np.iscomplexobj(data):
+            data = np.abs(data)
+        if data.dtype != np.uint8:
+            data = np.clip(data, 0, 255)
+            data = data.astype(np.uint8)
+    else:
+        img = Image.open(file_path).convert("L")
+        data = np.asarray(img, dtype=np.uint8)
+    img = Image.fromarray(data)
+    img = img.resize((shape[1], shape[0]), Image.BILINEAR)
+    return np.asarray(img, dtype=np.uint8)
+
+
+def load_field_file(path: str, shape: Tuple[int, int]) -> Tuple[np.ndarray, np.ndarray]:
+    file_path = Path(path)
+    suffix = file_path.suffix.lower()
+    if suffix == ".npy":
+        data = np.load(file_path)
+        if np.iscomplexobj(data):
+            amp = np.abs(data).astype(np.float64)
+            phase = np.angle(data).astype(np.float64)
+        else:
+            amp = data.astype(np.float64)
+            phase = np.zeros_like(amp)
+    else:
+        img = Image.open(file_path).convert("L")
+        amp = np.asarray(img, dtype=np.float64) / 255.0
+        phase = np.zeros_like(amp)
+
+    amp_img = Image.fromarray(amp.astype(np.float32))
+    amp_img = amp_img.resize((shape[1], shape[0]), Image.BILINEAR)
+    amp = np.asarray(amp_img, dtype=np.float64)
+
+    phase_img = Image.fromarray(phase.astype(np.float32))
+    phase_img = phase_img.resize((shape[1], shape[0]), Image.BILINEAR)
+    phase = np.asarray(phase_img, dtype=np.float64)
+    return amp, phase
+
+
+def generate_lg_field(shape: Tuple[int, int], w0: float, p: int, l: int) -> Tuple[np.ndarray, np.ndarray]:
+    height, width = shape
+    yy, xx = np.mgrid[0:height, 0:width]
+    cx = width / 2
+    cy = height / 2
+    x = xx - cx
+    y = yy - cy
+    r = np.sqrt(x ** 2 + y ** 2)
+    theta = np.arctan2(y, x)
+    rho = np.sqrt(2) * r / max(w0, 1e-6)
+    try:
+        from scipy.special import genlaguerre
+
+        lag = genlaguerre(p, abs(l))(rho ** 2)
+    except Exception:
+        lag = np.ones_like(rho)
+    amp = (rho ** abs(l)) * lag * np.exp(-(rho ** 2) / 2)
+    amp = amp / (np.max(amp) + 1e-9)
+    phase = l * theta
+    return amp.astype(np.float64), phase.astype(np.float64)
+
+
+def render_letter_field(shape: Tuple[int, int], letter: str) -> Tuple[np.ndarray, np.ndarray]:
+    height, width = shape
+    img = Image.new("L", (width, height), color=0)
+    from PIL import ImageDraw, ImageFont
+
+    draw = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.truetype("arial.ttf", size=int(min(width, height) * 0.6))
+    except Exception:
+        font = ImageFont.load_default()
+    text = (letter or "A")[0]
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    pos = ((width - text_w) // 2, (height - text_h) // 2)
+    draw.text(pos, text, fill=255, font=font)
+    amp = np.asarray(img, dtype=np.float64) / 255.0
+    phase = np.zeros_like(amp)
+    return amp, phase
+
+
+def load_mnist_sample(index: int, fashion: bool = False) -> np.ndarray:
+    try:
+        if fashion:
+            from tensorflow.keras.datasets import fashion_mnist
+
+            (x_train, _), _ = fashion_mnist.load_data()
+        else:
+            from tensorflow.keras.datasets import mnist
+
+            (x_train, _), _ = mnist.load_data()
+    except Exception as exc:
+        raise RuntimeError(f"MNIST 数据集不可用: {exc}") from exc
+    idx = int(index) % x_train.shape[0]
+    return x_train[idx]

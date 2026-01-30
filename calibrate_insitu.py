@@ -304,12 +304,14 @@ class CameraGX(CameraBase):
         self._setup_camera(config)
         self.cam.stream_on()
         self.avg_frames = int(config.get("avg_frames", 1))
+        self._exposure_us = float(config.get("exposure_us", 20000))
 
     def _setup_camera(self, config: Dict) -> None:
         remote = self.cam
         if remote.get_remote_device_feature_control().is_implemented("ExposureTime"):
             exposure = float(config.get("exposure_us", 20000))
             remote.get_remote_device_feature_control().get_float_feature("ExposureTime").set(exposure)
+            self._exposure_us = exposure
         if remote.get_remote_device_feature_control().is_implemented("Gain"):
             gain = float(config.get("gain", 0.0))
             remote.get_remote_device_feature_control().get_float_feature("Gain").set(gain)
@@ -330,6 +332,16 @@ class CameraGX(CameraBase):
         self.cam.stream_off()
         self.cam.close_device()
 
+    def set_exposure(self, exposure_us: float) -> None:
+        remote = self.cam
+        if remote.get_remote_device_feature_control().is_implemented("ExposureTime"):
+            remote.get_remote_device_feature_control().get_float_feature("ExposureTime").set(float(exposure_us))
+            self._exposure_us = float(exposure_us)
+
+    @property
+    def exposure_us(self) -> float:
+        return self._exposure_us
+
 
 class MockCamera(CameraBase):
     def __init__(self, config: Dict, slm2_shape: Tuple[int, int], noise_std: float = 5.0):
@@ -337,6 +349,7 @@ class MockCamera(CameraBase):
         self.noise_std = noise_std
         self.slm2_shape = slm2_shape
         self.current_window: Optional[Tuple[int, int]] = None
+        self._exposure_us = float(config.get("exposure_us", 20000))
 
     def update_window(self, center: Optional[Tuple[int, int]]) -> None:
         self.current_window = center
@@ -348,9 +361,17 @@ class MockCamera(CameraBase):
             sx = int(self.width * 0.5 + (cx - self.slm2_shape[1] / 2) * 0.1)
             sy = int(self.height * 0.5 + (cy - self.slm2_shape[0] / 2) * 0.1)
             yy, xx = np.mgrid[0:self.height, 0:self.width]
-            img += 200.0 * np.exp(-((xx - sx) ** 2 + (yy - sy) ** 2) / (2 * 20 ** 2))
+            scale = min(2.0, max(0.2, self._exposure_us / 20000.0))
+            img += 200.0 * scale * np.exp(-((xx - sx) ** 2 + (yy - sy) ** 2) / (2 * 20 ** 2))
         noise = np.random.normal(0, self.noise_std, size=img.shape)
         return np.clip(img + noise, 0, 255).astype(np.float32)
+
+    def set_exposure(self, exposure_us: float) -> None:
+        self._exposure_us = float(exposure_us)
+
+    @property
+    def exposure_us(self) -> float:
+        return self._exposure_us
 
 
 class SLM1Controller:
@@ -372,6 +393,10 @@ class SLM1Controller:
         path = self.output_dir / "slm1_temp.bmp"
         img.save(path)
         self.slm.Disp_ReadImage(path=str(path), screenNum=self.screen_num, bits=8)
+
+    def display_phase(self, phase: np.ndarray, use_comp: bool = True) -> None:
+        img_u8 = phase_to_uint8(phase)
+        self.display_gray(img_u8, use_comp=use_comp)
 
     def close(self) -> None:
         self.slm.Close_window(self.screen_num)
@@ -412,6 +437,19 @@ class SLM2Controller:
         if err != self.heds.HEDSERR_NoError:
             raise RuntimeError(self.heds.SDK.ErrorString(err))
 
+    def display_gray(self, img_u8: np.ndarray, use_comp: bool = False) -> None:
+        img = Image.fromarray(img_u8)
+        path = self.output_dir / "slm2_temp.bmp"
+        img.save(path)
+        if hasattr(self.slm, "showCGHFromImageFile"):
+            err = self.slm.showCGHFromImageFile(str(path))
+        elif hasattr(self.slm, "showDataFromImageFile"):
+            err = self.slm.showDataFromImageFile(str(path))
+        else:
+            raise RuntimeError("未找到可用的 SLM2 显示接口")
+        if err != self.heds.HEDSERR_NoError:
+            raise RuntimeError(self.heds.SDK.ErrorString(err))
+
 
 class MockSLM2:
     def __init__(self, config: Dict):
@@ -420,6 +458,9 @@ class MockSLM2:
 
     def display_phase(self, phase: np.ndarray) -> None:
         self.last_phase = phase
+
+    def display_gray(self, img_u8: np.ndarray, use_comp: bool = False) -> None:
+        self.last_phase = (img_u8.astype(np.float64) / 255.0) * (2 * np.pi)
 
 
 def build_scan_positions(roi: ROI, step: int) -> Tuple[List[int], List[int]]:
@@ -652,6 +693,7 @@ def run_calibration(config: Dict, mock: bool, visualize: bool = False) -> None:
         centers: List[Tuple[int, int]] = []
         n_layers = int(config["calibration"]["n_layers"])
         roi_layers = config["calibration"].get("roi_layers", [])
+        initial_centers = config["calibration"].get("initial_centers", [])
         auto_cfg = config["calibration"].get("roi_auto", {})
         block_mode = config["slm2"].get("block_mode", "checkerboard")
         use_auto = bool(auto_cfg.get("enabled", True))
@@ -661,6 +703,9 @@ def run_calibration(config: Dict, mock: bool, visualize: bool = False) -> None:
             layer_i = idx + 1
             if idx < len(roi_layers):
                 roi = roi_from_dict(roi_layers[idx]).clamp(slm2_shape[1], slm2_shape[0])
+            elif idx < len(initial_centers):
+                init_center = initial_centers[idx]
+                roi = auto_roi((int(init_center[0]), int(init_center[1])), half_size, slm2_shape)
             elif use_auto and centers:
                 roi = auto_roi(centers[-1], half_size, slm2_shape)
             else:

@@ -24,7 +24,12 @@ slm2:
 
 calibration:
   lambda_m: 5.32e-7
-  n_layers: 5
+  n_layers: 4
+  initial_centers:
+    - [240, 540]
+    - [720, 540]
+    - [1200, 540]
+    - [1680, 540]
   window:
     shape: "circle"  # circle 或 square
     size_px: 40

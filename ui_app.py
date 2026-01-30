@@ -1,5 +1,6 @@
 import argparse
 import sys
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -11,11 +12,13 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from calibrate_insitu import CameraGX, MockCamera, MockSLM2, SLM1Controller, SLM2Controller
 from ui.phase_utils import compose_layers, load_phase_file, make_preview_image
 from ui.widgets import (
+    CameraControlPanel,
     ImageSourcePanel,
     LogPanel,
     PlayerControls,
     PreviewPanel,
     RoiStatsPanel,
+    SLMPreviewPanel,
     SLM2Panel,
     StatusPanel,
 )
@@ -56,8 +59,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.recording = False
         self.record_dir: Optional[Path] = None
+        self.last_record_time = 0.0
+        self.overexposed = False
         self._latest_slm2_loaded_phase: Optional[np.ndarray] = None
         self._latest_slm2_returned_phase: Optional[np.ndarray] = None
+        self._latest_slm1_image: Optional[np.ndarray] = None
 
         self._setup_ui()
         self._setup_threads()
@@ -71,8 +77,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.player_controls = PlayerControls()
         self.slm2_panel = SLM2Panel()
         self.preview_panel = PreviewPanel()
+        self.slm1_preview = SLMPreviewPanel("SLM1 预览")
         self.status_panel = StatusPanel()
         self.log_panel = LogPanel()
+        self.camera_control = CameraControlPanel()
 
         self.run_button = QtWidgets.QPushButton("Run")
         self.stop_button = QtWidgets.QPushButton("Stop")
@@ -84,6 +92,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.image_panel.generate_button.clicked.connect(self.generate_hologram)
         self.image_panel.load_button.clicked.connect(self.load_slm1)
+        self.image_panel.run_button.clicked.connect(self.start_slm1)
+        self.image_panel.stop_button.clicked.connect(self.stop_slm1)
         self.player_controls.play_clicked.connect(self.start_playback)
         self.player_controls.pause_clicked.connect(self.pause_playback)
         self.player_controls.prev_clicked.connect(self.show_prev_image)
@@ -96,16 +106,23 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.slm2_panel.apply_button.clicked.connect(self.apply_slm2)
         self.preview_panel.display_mode_changed.connect(lambda _: self.update_preview())
+        self.slm2_panel.run_button.clicked.connect(self.start_slm2)
+        self.slm2_panel.stop_button.clicked.connect(self.stop_slm2)
 
         self.run_button.clicked.connect(self.run_all)
         self.stop_button.clicked.connect(self.stop_all)
         self.save_button.clicked.connect(self.save_frame)
         self.record_button.clicked.connect(self.start_recording)
         self.stop_record_button.clicked.connect(self.stop_recording)
+        self.camera_control.run_button.clicked.connect(self.start_camera)
+        self.camera_control.stop_button.clicked.connect(self.stop_camera)
+        self.camera_control.reset_view_button.clicked.connect(self.reset_camera_view)
+        self.camera_control.apply_exposure_button.clicked.connect(self.apply_exposure)
 
         left_layout = QtWidgets.QVBoxLayout()
         left_layout.addWidget(self.image_panel)
         left_layout.addWidget(self.player_controls)
+        left_layout.addWidget(self.slm1_preview)
         left_layout.addWidget(self.log_panel)
 
         center_layout = QtWidgets.QVBoxLayout()
@@ -115,6 +132,7 @@ class MainWindow(QtWidgets.QMainWindow):
         right_layout = QtWidgets.QVBoxLayout()
         right_layout.addWidget(self._build_camera_view())
         right_layout.addWidget(self.roi_panel)
+        right_layout.addWidget(self.camera_control)
         right_layout.addWidget(self.save_button)
         right_layout.addWidget(self.record_button)
         right_layout.addWidget(self.stop_record_button)
@@ -149,8 +167,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view_box.setBackgroundColor("k")
 
         self.roi = pg.RectROI([50, 50], [100, 100], pen=pg.mkPen("y", width=2))
+        self.roi.addScaleHandle([0, 0], [1, 1])
+        self.roi.addScaleHandle([1, 0], [0, 1])
+        self.roi.addScaleHandle([0, 1], [1, 0])
+        self.roi.addScaleHandle([1, 1], [0, 0])
+        self.roi.addTranslateHandle([0.5, 0.5])
         self.view_box.addItem(self.roi)
         self.roi.sigRegionChanged.connect(self.update_roi_stats)
+        self.roi.sigRegionChangeFinished.connect(self.on_roi_changed)
 
         self.plot_widget.scene().sigMouseMoved.connect(self.on_mouse_moved)
 
@@ -166,13 +190,113 @@ class MainWindow(QtWidgets.QMainWindow):
         self.slm1_worker = None
         self.slm2_worker = None
 
+    def start_slm1(self) -> None:
+        if self.slm1_thread.isRunning():
+            return
+        try:
+            self.slm1_controller = self._create_slm_controller("slm1")
+            slm1_shape = (self.slm1_controller.height, self.slm1_controller.width)
+            slm1_period = int(self.config.get("slm1", {}).get("bolduc_period", 8))
+            self.slm1_worker = SLM1Worker(self.slm1_controller, slm1_shape, slm1_period)
+            self.slm1_worker.moveToThread(self.slm1_thread)
+            self.slm1_worker.status.connect(self.on_slm1_status)
+            self.slm1_worker.error.connect(self.on_slm1_error)
+            self.slm1_worker.image_ready.connect(self.on_slm1_image_ready)
+            self.slm1_thread.start()
+            self.log("SLM1 已启动")
+        except Exception as exc:
+            self.slm1_controller = None
+            self.slm1_worker = None
+            self.log(f"SLM1 初始化失败: {exc}")
+
+    def stop_slm1(self) -> None:
+        if self.slm1_thread.isRunning():
+            self.slm1_thread.quit()
+            self.slm1_thread.wait()
+        if self.slm1_controller is not None and hasattr(self.slm1_controller, "close"):
+            self.slm1_controller.close()
+        self.slm1_controller = None
+        self.slm1_worker = None
+        self.log("SLM1 已停止")
+
+    def start_slm2(self) -> None:
+        if self.slm2_thread.isRunning():
+            return
+        try:
+            self.slm2_controller = self._create_slm_controller("slm2")
+            slm2_shape = (self.slm2_controller.height, self.slm2_controller.width)
+            self.slm2_worker = SLM2Worker(self.slm2_controller, slm2_shape)
+            self.slm2_worker.moveToThread(self.slm2_thread)
+            self.slm2_worker.status.connect(self.on_slm2_status)
+            self.slm2_worker.error.connect(self.on_slm2_error)
+            self.slm2_worker.phase_ready.connect(self.on_slm2_phase_ready)
+            self.slm2_thread.start()
+            self.log("SLM2 已启动")
+        except Exception as exc:
+            self.slm2_controller = None
+            self.slm2_worker = None
+            self.log(f"SLM2 初始化失败: {exc}")
+
+    def stop_slm2(self) -> None:
+        if self.slm2_thread.isRunning():
+            self.slm2_thread.quit()
+            self.slm2_thread.wait()
+        if self.slm2_controller is not None and hasattr(self.slm2_controller, "close"):
+            self.slm2_controller.close()
+        self.slm2_controller = None
+        self.slm2_worker = None
+        self.log("SLM2 已停止")
+
+    def start_camera(self) -> None:
+        if self.camera_thread.isRunning():
+            return
+        try:
+            if self.mock:
+                slm2_type = self.slm2_panel.device_combo.currentData() or self.config.get("slm2", {}).get("device_type", "holoeye")
+                slm2_shape = self._slm_shape_for_type(slm2_type)
+                self.camera = MockCamera(self.config.get("mock", {}), slm2_shape)
+            else:
+                self.camera = CameraGX(self.config.get("camera", {}))
+            self.camera_worker = CameraWorker(self.camera, self.config.get("camera", {}).get("target_fps", 30))
+            self.camera_worker.moveToThread(self.camera_thread)
+            self.camera_thread.started.connect(self.camera_worker.start)
+            self.camera_worker.frame_ready.connect(self.update_frame)
+            self.camera_worker.error.connect(self.on_camera_error)
+            self.camera_thread.start()
+            self.apply_exposure()
+            self.log("相机已启动")
+        except Exception as exc:
+            self.camera = None
+            self.camera_worker = None
+            self.log(f"相机初始化失败: {exc}")
+
+    def stop_camera(self) -> None:
+        if self.camera_worker is not None:
+            self.camera_worker.stop()
+        if self.camera_thread.isRunning():
+            self.camera_thread.quit()
+            self.camera_thread.wait()
+        if self.camera is not None and hasattr(self.camera, "close"):
+            self.camera.close()
+        self.camera = None
+        self.camera_worker = None
+        self.log("相机已停止")
+
     def _load_defaults(self) -> None:
         slm1_comp = self.config.get("slm1", {}).get("compensation_path", "")
         slm2_comp = self.config.get("slm2", {}).get("compensation_path", "")
+        slm1_type = self.config.get("slm1", {}).get("device_type", "upo")
+        slm2_type = self.config.get("slm2", {}).get("device_type", "holoeye")
         if slm1_comp:
             self.image_panel.slm1_comp_edit.setText(slm1_comp)
         if slm2_comp:
             self.slm2_panel.slm2_comp_edit.setText(slm2_comp)
+        slm1_index = self.image_panel.device_combo.findData(slm1_type)
+        if slm1_index >= 0:
+            self.image_panel.device_combo.setCurrentIndex(slm1_index)
+        slm2_index = self.slm2_panel.device_combo.findData(slm2_type)
+        if slm2_index >= 0:
+            self.slm2_panel.device_combo.setCurrentIndex(slm2_index)
 
         interval_ms = int(self.config.get("slm1", {}).get("play_interval_ms", 500))
         self.image_panel.interval_spin.setValue(interval_ms)
@@ -185,78 +309,48 @@ class MainWindow(QtWidgets.QMainWindow):
                 widget.dy_spin.setValue(int(layer_cfg[idx].get("dy", 0)))
                 widget.enable_checkbox.setChecked(bool(layer_cfg[idx].get("enabled", True)))
 
+        exposure_us = float(self.config.get("camera", {}).get("exposure_us", 20000))
+        self.camera_control.exposure_spin.setValue(exposure_us)
+        record_interval = int(self.config.get("camera", {}).get("record_interval_ms", 200))
+        self.camera_control.record_interval_spin.setValue(record_interval)
+
     def log(self, message: str) -> None:
         self.log_panel.append(message)
         print(message)
 
-    def _init_hardware(self) -> None:
+    def _slm_shape_for_type(self, device_type: str) -> tuple[int, int]:
+        if device_type == "holoeye":
+            return (1080, 1920)
+        return (1200, 1920)
+
+    def _create_slm_controller(self, role: str):
         output_cfg = self.config.get("output", {})
         slm1_dir = Path(output_cfg.get("slm1_tmp_dir", "output/slm1_tmp"))
         slm2_dir = Path(output_cfg.get("slm2_tmp_dir", "output/slm2_tmp"))
         slm1_dir.mkdir(parents=True, exist_ok=True)
         slm2_dir.mkdir(parents=True, exist_ok=True)
 
-        if self.mock:
-            slm1_size = tuple(self.config.get("mock", {}).get("slm1_size", [1200, 1920]))
-            slm2_size = tuple(self.config.get("mock", {}).get("slm2_size", [1200, 1920]))
-            self.slm1_controller = MockSLM1(slm1_size)
-            self.slm2_controller = MockSLM2({"slm2_size": slm2_size})
-            self.camera = MockCamera(self.config.get("mock", {}), slm2_size)
-        else:
-            self.slm1_controller = None
-            self.slm2_controller = None
-            self.camera = None
-            try:
-                self.slm1_controller = SLM1Controller(self.config.get("slm1", {}), slm1_dir)
-            except Exception as exc:
-                self.log(f"SLM1 初始化失败: {exc}")
-            try:
-                self.slm2_controller = SLM2Controller(self.config.get("slm2", {}), slm2_dir)
-            except Exception as exc:
-                self.log(f"SLM2 初始化失败: {exc}")
-            try:
-                self.camera = CameraGX(self.config.get("camera", {}))
-            except Exception as exc:
-                self.log(f"相机初始化失败: {exc}")
+        if role == "slm1":
+            device_type = self.image_panel.device_combo.currentData() or self.config.get("slm1", {}).get("device_type", "upo")
+            cfg = dict(self.config.get("slm1", {}))
+            if device_type == "holoeye" and not cfg.get("sdk_path"):
+                cfg["sdk_path"] = self.config.get("slm2", {}).get("sdk_path", "")
+            if device_type == "upo":
+                return MockSLM1(self._slm_shape_for_type(device_type)) if self.mock else SLM1Controller(cfg, slm1_dir)
+            return MockSLM2({"slm2_size": self._slm_shape_for_type(device_type)}) if self.mock else SLM2Controller(cfg, slm1_dir)
+
+        device_type = self.slm2_panel.device_combo.currentData() or self.config.get("slm2", {}).get("device_type", "holoeye")
+        cfg = dict(self.config.get("slm2", {}))
+        if device_type == "upo":
+            if "screen_num" not in cfg:
+                cfg["screen_num"] = self.config.get("slm1", {}).get("screen_num", 1)
+            return MockSLM1(self._slm_shape_for_type(device_type)) if self.mock else SLM1Controller(cfg, slm2_dir)
+        return MockSLM2({"slm2_size": self._slm_shape_for_type(device_type)}) if self.mock else SLM2Controller(cfg, slm2_dir)
 
     def _start_workers(self) -> None:
-        self._init_hardware()
-
-        slm1_period = int(self.config.get("slm1", {}).get("bolduc_period", 8))
-        self.camera_worker = None
-        self.slm1_worker = None
-        self.slm2_worker = None
-
-        if self.camera is not None:
-            self.camera_worker = CameraWorker(self.camera, self.config.get("camera", {}).get("target_fps", 30))
-            self.camera_worker.moveToThread(self.camera_thread)
-            self.camera_thread.started.connect(self.camera_worker.start)
-            self.camera_worker.frame_ready.connect(self.update_frame)
-            self.camera_worker.error.connect(self.on_camera_error)
-            self.camera_thread.start()
-        else:
-            self.log("相机未初始化，跳过相机线程")
-
-        if self.slm1_controller is not None:
-            slm1_shape = (self.slm1_controller.height, self.slm1_controller.width)
-            self.slm1_worker = SLM1Worker(self.slm1_controller, slm1_shape, slm1_period)
-            self.slm1_worker.moveToThread(self.slm1_thread)
-            self.slm1_worker.status.connect(self.on_slm1_status)
-            self.slm1_worker.error.connect(self.on_slm1_error)
-            self.slm1_thread.start()
-        else:
-            self.log("SLM1 未初始化，跳过 SLM1 线程")
-
-        if self.slm2_controller is not None:
-            slm2_shape = (self.slm2_controller.height, self.slm2_controller.width)
-            self.slm2_worker = SLM2Worker(self.slm2_controller, slm2_shape)
-            self.slm2_worker.moveToThread(self.slm2_thread)
-            self.slm2_worker.status.connect(self.on_slm2_status)
-            self.slm2_worker.error.connect(self.on_slm2_error)
-            self.slm2_worker.phase_ready.connect(self.on_slm2_phase_ready)
-            self.slm2_thread.start()
-        else:
-            self.log("SLM2 未初始化，跳过 SLM2 线程")
+        self.start_slm1()
+        self.start_slm2()
+        self.start_camera()
 
     def run_all(self) -> None:
         if self.camera_thread.isRunning() or self.slm1_thread.isRunning() or self.slm2_thread.isRunning():
@@ -268,25 +362,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def stop_all(self) -> None:
         self.log("停止运行流程")
         self.pause_playback()
-
-        if self.camera_worker is not None:
-            self.camera_worker.stop()
-        if self.camera_thread.isRunning():
-            self.camera_thread.quit()
-            self.camera_thread.wait()
-        if self.slm1_thread.isRunning():
-            self.slm1_thread.quit()
-            self.slm1_thread.wait()
-        if self.slm2_thread.isRunning():
-            self.slm2_thread.quit()
-            self.slm2_thread.wait()
-
-        if self.camera is not None and hasattr(self.camera, "close"):
-            self.camera.close()
-        if self.slm1_controller is not None and hasattr(self.slm1_controller, "close"):
-            self.slm1_controller.close()
-        if self.slm2_controller is not None and hasattr(self.slm2_controller, "close"):
-            self.slm2_controller.close()
+        self.stop_camera()
+        self.stop_slm1()
+        self.stop_slm2()
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         self.stop_all()
@@ -350,22 +428,40 @@ class MainWindow(QtWidgets.QMainWindow):
         self.show_current_image()
 
     def generate_hologram(self) -> None:
-        if not self.image_paths:
-            self._collect_image_paths()
-        if not self.image_paths:
-            self.log("未选择输入图像")
-            return
+        input_type = self.image_panel.input_type_combo.currentData() or "hologram"
+        field_mode = self.image_panel.field_mode_combo.currentData()
+        if input_type == "field" and field_mode != "file":
+            pass
+        else:
+            if not self.image_paths:
+                self._collect_image_paths()
+            if not self.image_paths:
+                self.log("未选择输入图像")
+                return
         if self.slm1_worker is None:
             self.log("SLM1 未初始化，请先 Run")
             return
         self.load_slm1()
 
     def load_slm1(self) -> None:
-        if not self.image_paths:
-            return
-        path = str(self.image_paths[self.image_index])
+        input_type = self.image_panel.input_type_combo.currentData() or "hologram"
+        field_mode = self.image_panel.field_mode_combo.currentData()
+        if input_type == "field" and field_mode != "file":
+            path = ""
+        else:
+            if not self.image_paths:
+                return
+            path = str(self.image_paths[self.image_index])
         use_comp = self.image_panel.slm1_comp_checkbox.isChecked()
         comp_path = self.image_panel.slm1_comp_edit.text().strip()
+        field_params = {
+            "mode": self.image_panel.field_mode_combo.currentData(),
+            "w0": self.image_panel.lg_w0_spin.value(),
+            "p": self.image_panel.lg_p_spin.value(),
+            "l": self.image_panel.lg_l_spin.value(),
+            "letter": self.image_panel.letter_edit.text().strip(),
+            "index": self.image_panel.dataset_index_spin.value(),
+        }
         QtCore.QMetaObject.invokeMethod(
             self.slm1_worker,
             "load_hologram",
@@ -373,6 +469,8 @@ class MainWindow(QtWidgets.QMainWindow):
             QtCore.Q_ARG(str, path),
             QtCore.Q_ARG(bool, use_comp),
             QtCore.Q_ARG(str, comp_path),
+            QtCore.Q_ARG(str, input_type),
+            QtCore.Q_ARG(object, field_params),
         )
 
     def on_layer_change(self, _: int) -> None:
@@ -387,9 +485,11 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as exc:
             self.log(f"SLM2 合成失败: {exc}")
             return
+        self._latest_slm2_loaded_phase = phase
 
         if self.slm2_worker is None:
             self.log("SLM2 未初始化，请先 Run")
+            self.update_preview()
             return
 
         use_comp = self.slm2_panel.slm2_comp_checkbox.isChecked()
@@ -409,7 +509,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.slm2_controller is not None:
             slm2_shape = (self.slm2_controller.height, self.slm2_controller.width)
         else:
-            slm2_shape = tuple(self.config.get("mock", {}).get("slm2_size", [1200, 1920]))
+            slm2_type = self.slm2_panel.device_combo.currentData() or self.config.get("slm2", {}).get("device_type", "holoeye")
+            slm2_shape = self._slm_shape_for_type(slm2_type)
         window_size = tuple(self.config.get("slm2", {}).get("window_size_px", [400, 400]))
         center_defaults = self.config.get("slm2", {}).get("default_centers", [])
 
@@ -445,6 +546,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self._latest_slm2_returned_phase = returned
         self.update_preview()
 
+    def on_slm1_image_ready(self, img_u8: np.ndarray) -> None:
+        self._latest_slm1_image = img_u8
+        img = Image.fromarray(img_u8, mode="L").convert("RGB")
+        qimage = QtGui.QImage(
+            img.tobytes("raw", "RGB"),
+            img.width,
+            img.height,
+            QtGui.QImage.Format.Format_RGB888,
+        )
+        pixmap = QtGui.QPixmap.fromImage(qimage)
+        self.slm1_preview.update_pixmap(pixmap)
+
     def update_preview(self) -> None:
         if not hasattr(self, "_latest_preview"):
             try:
@@ -455,7 +568,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.slm2_controller is not None:
             slm2_shape = (self.slm2_controller.height, self.slm2_controller.width)
         else:
-            slm2_shape = tuple(self.config.get("mock", {}).get("slm2_size", [1200, 1920]))
+            slm2_type = self.slm2_panel.device_combo.currentData() or self.config.get("slm2", {}).get("device_type", "holoeye")
+            slm2_shape = self._slm_shape_for_type(slm2_type)
         mode = self.preview_panel.display_mode()
         base_phase = None
         if mode == "returned":
@@ -464,7 +578,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 base_phase = self._latest_slm2_loaded_phase
         else:
             base_phase = self._latest_slm2_loaded_phase
-        img = make_preview_image(slm2_shape, rects, centers, enabled, base_phase=base_phase)
+        label_size = self.preview_panel.label.size()
+        scale = min(label_size.width() / slm2_shape[1], label_size.height() / slm2_shape[0], 1.0)
+        scale = max(scale, 0.05)
+        img = make_preview_image(slm2_shape, rects, centers, enabled, base_phase=base_phase, scale=scale)
         qimage = QtGui.QImage(
             img.tobytes("raw", "RGB"),
             img.width,
@@ -476,12 +593,21 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def update_frame(self, frame: np.ndarray, fps: float) -> None:
         self.image_item.setImage(frame, autoLevels=True)
+        self.view_box.setAspectLocked(True, ratio=frame.shape[1] / frame.shape[0])
         self.status_panel.update_status(fps=fps)
+        self._check_overexposure(frame)
         if self.recording and self.record_dir:
-            timestamp = QtCore.QDateTime.currentDateTime().toString("yyyyMMdd_HHmmss_zzz")
-            path = self.record_dir / f"frame_{timestamp}.png"
-            img = np.clip(frame, 0, 255).astype(np.uint8)
-            Image.fromarray(img).save(path)
+            now = time.time()
+            interval_s = self.camera_control.record_interval_spin.value() / 1000.0
+            if now - self.last_record_time >= interval_s:
+                if not (self.overexposed and self.camera_control.auto_reduce_checkbox.isChecked()):
+                    timestamp = QtCore.QDateTime.currentDateTime().toString("yyyyMMdd_HHmmss_zzz")
+                    path = self.record_dir / f"frame_{timestamp}.png"
+                    img = np.clip(frame, 0, 255).astype(np.uint8)
+                    if self.camera_control.save_roi_checkbox.isChecked():
+                        img = self._crop_to_roi(img)
+                    Image.fromarray(img).save(path)
+                self.last_record_time = now
         self.update_roi_stats()
 
     def update_roi_stats(self) -> None:
@@ -510,6 +636,36 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.roi_panel.update_stats(mean, min_val, max_val, sum_val, (cx, cy))
 
+    def on_roi_changed(self) -> None:
+        if self.image_item.image is None:
+            return
+        roi_bounds = self.roi.parentBounds()
+        self.view_box.setRange(roi_bounds, padding=0.05)
+
+    def reset_camera_view(self) -> None:
+        self.view_box.autoRange()
+
+    def _crop_to_roi(self, img: np.ndarray) -> np.ndarray:
+        roi_bounds = self.roi.parentBounds()
+        x0 = max(int(roi_bounds.left()), 0)
+        y0 = max(int(roi_bounds.top()), 0)
+        x1 = min(int(roi_bounds.right()), img.shape[1] - 1)
+        y1 = min(int(roi_bounds.bottom()), img.shape[0] - 1)
+        if x1 <= x0 or y1 <= y0:
+            return img
+        return img[y0:y1, x0:x1]
+
+    def _check_overexposure(self, frame: np.ndarray) -> None:
+        threshold = float(self.config.get("camera", {}).get("overexposure_threshold", 250))
+        ratio = float(self.config.get("camera", {}).get("overexposure_ratio", 0.01))
+        over = np.mean(frame >= threshold)
+        self.overexposed = over >= ratio
+        self.status_panel.update_status(overexposure=f"{over:.2%}" if self.overexposed else "正常")
+        if self.overexposed and self.camera_control.auto_reduce_checkbox.isChecked():
+            new_exposure = max(100.0, self.camera_control.exposure_spin.value() * 0.8)
+            self.camera_control.exposure_spin.setValue(new_exposure)
+            self.apply_exposure()
+
     def on_mouse_moved(self, pos) -> None:
         if self.image_item.image is None:
             return
@@ -533,6 +689,8 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         if path:
             img = np.clip(self.image_item.image, 0, 255).astype(np.uint8)
+            if self.camera_control.save_roi_checkbox.isChecked():
+                img = self._crop_to_roi(img)
             Image.fromarray(img).save(path)
             self.log(f"保存当前帧: {path}")
 
@@ -542,6 +700,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.record_dir = Path(folder)
         self.recording = True
+        self.last_record_time = 0.0
         self.log(f"开始连续保存: {folder}")
 
     def stop_recording(self) -> None:
@@ -566,6 +725,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def on_camera_error(self, message: str) -> None:
         self.log(f"相机错误: {message}")
+
+    def apply_exposure(self) -> None:
+        if self.camera_worker is None:
+            self.log("相机未初始化，无法设置曝光")
+            return
+        exposure_us = self.camera_control.exposure_spin.value()
+        QtCore.QMetaObject.invokeMethod(
+            self.camera_worker,
+            "set_exposure",
+            QtCore.Qt.ConnectionType.QueuedConnection,
+            QtCore.Q_ARG(float, exposure_us),
+        )
+        self.log(f"设置曝光: {exposure_us:.0f} us")
 
 
 def main() -> None:

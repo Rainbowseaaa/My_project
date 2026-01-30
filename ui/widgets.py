@@ -93,15 +93,24 @@ class StatusPanel(QtWidgets.QGroupBox):
         self.fps_label = QtWidgets.QLabel("FPS: -")
         self.slm1_label = QtWidgets.QLabel("SLM1: -")
         self.slm2_label = QtWidgets.QLabel("SLM2: -")
+        self.overexposure_label = QtWidgets.QLabel("过曝: -")
 
         layout = QtWidgets.QVBoxLayout()
         layout.addWidget(self.image_label)
         layout.addWidget(self.fps_label)
         layout.addWidget(self.slm1_label)
         layout.addWidget(self.slm2_label)
+        layout.addWidget(self.overexposure_label)
         self.setLayout(layout)
 
-    def update_status(self, image_name: str = None, fps: float = None, slm1: str = None, slm2: str = None) -> None:
+    def update_status(
+        self,
+        image_name: str = None,
+        fps: float = None,
+        slm1: str = None,
+        slm2: str = None,
+        overexposure: str = None,
+    ) -> None:
         if image_name is not None:
             self.image_label.setText(f"当前图像: {image_name}")
         if fps is not None:
@@ -110,6 +119,8 @@ class StatusPanel(QtWidgets.QGroupBox):
             self.slm1_label.setText(f"SLM1: {slm1}")
         if slm2 is not None:
             self.slm2_label.setText(f"SLM2: {slm2}")
+        if overexposure is not None:
+            self.overexposure_label.setText(f"过曝: {overexposure}")
 
 
 class PreviewPanel(QtWidgets.QGroupBox):
@@ -226,6 +237,9 @@ class PlayerControls(QtWidgets.QGroupBox):
 class ImageSourcePanel(QtWidgets.QGroupBox):
     def __init__(self, parent=None):
         super().__init__("SLM1 输入图像", parent)
+        self.device_combo = QtWidgets.QComboBox()
+        self.device_combo.addItem("UPO (1920x1200)", userData="upo")
+        self.device_combo.addItem("Holoeye (1920x1080)", userData="holoeye")
         self.image_edit = QtWidgets.QLineEdit()
         self.image_button = QtWidgets.QPushButton("选择单张图")
         self.folder_edit = QtWidgets.QLineEdit()
@@ -235,8 +249,33 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.interval_spin.setValue(500)
         self.interval_spin.setSuffix(" ms")
 
+        self.input_type_combo = QtWidgets.QComboBox()
+        self.input_type_combo.addItem("全息图(直接加载)", userData="hologram")
+        self.input_type_combo.addItem("光场(生成全息图)", userData="field")
+
+        self.field_mode_combo = QtWidgets.QComboBox()
+        self.field_mode_combo.addItem("文件", userData="file")
+        self.field_mode_combo.addItem("LG 光束", userData="lg")
+        self.field_mode_combo.addItem("字母", userData="letter")
+        self.field_mode_combo.addItem("MNIST", userData="mnist")
+        self.field_mode_combo.addItem("FashionMNIST", userData="fashion_mnist")
+
+        self.lg_w0_spin = QtWidgets.QDoubleSpinBox()
+        self.lg_w0_spin.setRange(1.0, 1000.0)
+        self.lg_w0_spin.setValue(80.0)
+        self.lg_w0_spin.setSuffix(" px")
+        self.lg_p_spin = QtWidgets.QSpinBox()
+        self.lg_p_spin.setRange(0, 10)
+        self.lg_l_spin = QtWidgets.QSpinBox()
+        self.lg_l_spin.setRange(-10, 10)
+        self.letter_edit = QtWidgets.QLineEdit("A")
+        self.dataset_index_spin = QtWidgets.QSpinBox()
+        self.dataset_index_spin.setRange(0, 9999)
+
         self.generate_button = QtWidgets.QPushButton("生成全息图")
         self.load_button = QtWidgets.QPushButton("加载到 SLM1")
+        self.run_button = QtWidgets.QPushButton("Run SLM1")
+        self.stop_button = QtWidgets.QPushButton("Stop SLM1")
 
         self.slm1_comp_checkbox = QtWidgets.QCheckBox("叠加 SLM1 补偿")
         self.slm1_comp_edit = QtWidgets.QLineEdit()
@@ -249,17 +288,41 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         top_layout.addWidget(self.folder_button, 1, 1)
         top_layout.addWidget(QtWidgets.QLabel("播放间隔"), 2, 0)
         top_layout.addWidget(self.interval_spin, 2, 1)
+        top_layout.addWidget(QtWidgets.QLabel("输入类型"), 3, 0)
+        top_layout.addWidget(self.input_type_combo, 3, 1)
+        top_layout.addWidget(QtWidgets.QLabel("SLM1 类型"), 4, 0)
+        top_layout.addWidget(self.device_combo, 4, 1)
 
         comp_layout = QtWidgets.QHBoxLayout()
         comp_layout.addWidget(self.slm1_comp_checkbox)
         comp_layout.addWidget(self.slm1_comp_edit, 1)
         comp_layout.addWidget(self.slm1_comp_button)
 
+        field_layout = QtWidgets.QGridLayout()
+        field_layout.addWidget(QtWidgets.QLabel("光场类型"), 0, 0)
+        field_layout.addWidget(self.field_mode_combo, 0, 1)
+        field_layout.addWidget(QtWidgets.QLabel("LG w0"), 1, 0)
+        field_layout.addWidget(self.lg_w0_spin, 1, 1)
+        field_layout.addWidget(QtWidgets.QLabel("LG p"), 2, 0)
+        field_layout.addWidget(self.lg_p_spin, 2, 1)
+        field_layout.addWidget(QtWidgets.QLabel("LG l"), 3, 0)
+        field_layout.addWidget(self.lg_l_spin, 3, 1)
+        field_layout.addWidget(QtWidgets.QLabel("字母"), 4, 0)
+        field_layout.addWidget(self.letter_edit, 4, 1)
+        field_layout.addWidget(QtWidgets.QLabel("数据集索引"), 5, 0)
+        field_layout.addWidget(self.dataset_index_spin, 5, 1)
+
+        run_layout = QtWidgets.QHBoxLayout()
+        run_layout.addWidget(self.run_button)
+        run_layout.addWidget(self.stop_button)
+
         layout = QtWidgets.QVBoxLayout()
         layout.addLayout(top_layout)
         layout.addWidget(self.generate_button)
         layout.addWidget(self.load_button)
+        layout.addLayout(field_layout)
         layout.addLayout(comp_layout)
+        layout.addLayout(run_layout)
         self.setLayout(layout)
 
         self.image_button.clicked.connect(self._pick_image)
@@ -295,10 +358,15 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
 class SLM2Panel(QtWidgets.QGroupBox):
     def __init__(self, parent=None):
         super().__init__("SLM2 四层相位")
+        self.device_combo = QtWidgets.QComboBox()
+        self.device_combo.addItem("Holoeye (1920x1080)", userData="holoeye")
+        self.device_combo.addItem("UPO (1920x1200)", userData="upo")
         self.layer_widgets: List[LayerWidget] = [LayerWidget(i) for i in range(4)]
         self.apply_button = QtWidgets.QPushButton("合成并加载 SLM2")
         self.auto_apply_checkbox = QtWidgets.QCheckBox("Auto Apply")
         self.auto_apply_checkbox.setChecked(False)
+        self.run_button = QtWidgets.QPushButton("Run SLM2")
+        self.stop_button = QtWidgets.QPushButton("Stop SLM2")
 
         self.slm2_comp_checkbox = QtWidgets.QCheckBox("叠加 SLM2 补偿")
         self.slm2_comp_edit = QtWidgets.QLineEdit()
@@ -310,11 +378,17 @@ class SLM2Panel(QtWidgets.QGroupBox):
         comp_layout.addWidget(self.slm2_comp_button)
 
         layout = QtWidgets.QVBoxLayout()
+        layout.addWidget(QtWidgets.QLabel("SLM2 类型"))
+        layout.addWidget(self.device_combo)
         for widget in self.layer_widgets:
             layout.addWidget(widget)
         layout.addLayout(comp_layout)
         layout.addWidget(self.auto_apply_checkbox)
         layout.addWidget(self.apply_button)
+        run_layout = QtWidgets.QHBoxLayout()
+        run_layout.addWidget(self.run_button)
+        run_layout.addWidget(self.stop_button)
+        layout.addLayout(run_layout)
         self.setLayout(layout)
 
         self.slm2_comp_button.clicked.connect(self._pick_slm2_comp)
@@ -331,3 +405,70 @@ class SLM2Panel(QtWidgets.QGroupBox):
 
     def get_layers(self) -> List[LayerConfig]:
         return [widget.get_config() for widget in self.layer_widgets]
+
+
+class CameraControlPanel(QtWidgets.QGroupBox):
+    def __init__(self, parent=None):
+        super().__init__("相机控制", parent)
+        self.run_button = QtWidgets.QPushButton("Run 相机")
+        self.stop_button = QtWidgets.QPushButton("Stop 相机")
+        self.reset_view_button = QtWidgets.QPushButton("复位视图")
+        self.exposure_spin = QtWidgets.QDoubleSpinBox()
+        self.exposure_spin.setRange(10.0, 200000.0)
+        self.exposure_spin.setValue(20000.0)
+        self.exposure_spin.setSuffix(" us")
+        self.apply_exposure_button = QtWidgets.QPushButton("应用曝光")
+
+        self.save_roi_checkbox = QtWidgets.QCheckBox("保存 ROI")
+        self.record_interval_spin = QtWidgets.QSpinBox()
+        self.record_interval_spin.setRange(10, 5000)
+        self.record_interval_spin.setValue(200)
+        self.record_interval_spin.setSuffix(" ms")
+
+        self.auto_reduce_checkbox = QtWidgets.QCheckBox("过曝自动降低曝光并丢弃")
+        self.auto_reduce_checkbox.setChecked(False)
+
+        run_layout = QtWidgets.QHBoxLayout()
+        run_layout.addWidget(self.run_button)
+        run_layout.addWidget(self.stop_button)
+
+        exposure_layout = QtWidgets.QHBoxLayout()
+        exposure_layout.addWidget(QtWidgets.QLabel("曝光时间"))
+        exposure_layout.addWidget(self.exposure_spin, 1)
+        exposure_layout.addWidget(self.apply_exposure_button)
+
+        record_layout = QtWidgets.QHBoxLayout()
+        record_layout.addWidget(QtWidgets.QLabel("连续存图间隔"))
+        record_layout.addWidget(self.record_interval_spin)
+
+        layout = QtWidgets.QVBoxLayout()
+        layout.addLayout(run_layout)
+        layout.addLayout(exposure_layout)
+        layout.addWidget(self.reset_view_button)
+        layout.addWidget(self.save_roi_checkbox)
+        layout.addLayout(record_layout)
+        layout.addWidget(self.auto_reduce_checkbox)
+        self.setLayout(layout)
+
+
+class SLMPreviewPanel(QtWidgets.QGroupBox):
+    def __init__(self, title: str, parent=None):
+        super().__init__(title, parent)
+        self.label = QtWidgets.QLabel()
+        self.label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.label.setMinimumSize(200, 140)
+        self.label.setStyleSheet("background-color: #222; border: 1px solid #444;")
+
+        layout = QtWidgets.QVBoxLayout()
+        layout.addWidget(self.label)
+        self.setLayout(layout)
+
+    def update_pixmap(self, pixmap: QtGui.QPixmap) -> None:
+        if pixmap is None:
+            return
+        scaled = pixmap.scaled(
+            self.label.size(),
+            QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+            QtCore.Qt.TransformationMode.SmoothTransformation,
+        )
+        self.label.setPixmap(scaled)

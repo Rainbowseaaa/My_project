@@ -10,8 +10,13 @@ from functions.bolduc_hologram import bolduc_phase_encoding
 from functions.utils import phase_to_uint8
 from ui.phase_utils import (
     apply_compensation,
+    generate_lg_field,
     load_compensation,
+    load_field_file,
+    load_hologram_file,
+    load_mnist_sample,
     load_phase_file,
+    render_letter_field,
 )
 
 
@@ -57,10 +62,19 @@ class CameraWorker(QtCore.QObject):
     def stop(self) -> None:
         self._running = False
 
+    @QtCore.pyqtSlot(float)
+    def set_exposure(self, exposure_us: float) -> None:
+        if hasattr(self._camera, "set_exposure"):
+            try:
+                self._camera.set_exposure(float(exposure_us))
+            except Exception as exc:
+                self.error.emit(str(exc))
+
 
 class SLM1Worker(QtCore.QObject):
     status = QtCore.pyqtSignal(str)
     error = QtCore.pyqtSignal(str)
+    image_ready = QtCore.pyqtSignal(object)
 
     def __init__(self, controller, slm_shape, period: int, parent=None):
         super().__init__(parent)
@@ -68,22 +82,44 @@ class SLM1Worker(QtCore.QObject):
         self._slm_shape = slm_shape
         self._period = period
 
-    @QtCore.pyqtSlot(str, bool, str)
-    def load_hologram(self, image_path: str, use_comp: bool, comp_path: str) -> None:
+    @QtCore.pyqtSlot(str, bool, str, str, object)
+    def load_hologram(self, image_path: str, use_comp: bool, comp_path: str, input_type: str, field_params: dict) -> None:
         try:
-            img = Image.open(image_path).convert("L")
-            img = img.resize((self._slm_shape[1], self._slm_shape[0]), Image.BILINEAR)
-            amp = np.asarray(img, dtype=np.float64) / 255.0
-            phase = np.zeros_like(amp)
-            hologram_phase = bolduc_phase_encoding(amp, phase, self._period)
+            if input_type == "hologram":
+                hologram_u8 = load_hologram_file(image_path, self._slm_shape)
+            else:
+                if field_params.get("mode") == "lg":
+                    amp, phase = generate_lg_field(
+                        self._slm_shape,
+                        float(field_params.get("w0", 80.0)),
+                        int(field_params.get("p", 0)),
+                        int(field_params.get("l", 0)),
+                    )
+                elif field_params.get("mode") == "letter":
+                    amp, phase = render_letter_field(self._slm_shape, field_params.get("letter", "A"))
+                elif field_params.get("mode") == "mnist":
+                    sample = load_mnist_sample(int(field_params.get("index", 0)), fashion=False)
+                    amp = np.asarray(Image.fromarray(sample).resize((self._slm_shape[1], self._slm_shape[0])), dtype=np.float64) / 255.0
+                    phase = np.zeros_like(amp)
+                elif field_params.get("mode") == "fashion_mnist":
+                    sample = load_mnist_sample(int(field_params.get("index", 0)), fashion=True)
+                    amp = np.asarray(Image.fromarray(sample).resize((self._slm_shape[1], self._slm_shape[0])), dtype=np.float64) / 255.0
+                    phase = np.zeros_like(amp)
+                else:
+                    amp, phase = load_field_file(image_path, self._slm_shape)
+                hologram_phase = bolduc_phase_encoding(amp, phase, self._period)
+                hologram_u8 = phase_to_uint8(hologram_phase)
 
             if use_comp and comp_path:
-                comp = load_compensation(comp_path, hologram_phase.shape, meaning="encoded_0_255")
-                hologram_phase = apply_compensation(hologram_phase, comp)
+                comp = load_compensation(comp_path, hologram_u8.shape, meaning="encoded_0_255")
+                if comp is not None:
+                    comp_u8 = phase_to_uint8(comp)
+                    hologram_u8 = ((hologram_u8.astype(np.uint16) + comp_u8.astype(np.uint16)) % 256).astype(np.uint8)
 
-            hologram_u8 = phase_to_uint8(hologram_phase)
             self._slm.display_gray(hologram_u8, use_comp=False)
-            self.status.emit(f"SLM1 加载完成: {Path(image_path).name}")
+            self.image_ready.emit(hologram_u8)
+            name = Path(image_path).name if image_path else "generated"
+            self.status.emit(f"SLM1 加载完成: {name}")
         except Exception as exc:
             self.error.emit(str(exc))
 
