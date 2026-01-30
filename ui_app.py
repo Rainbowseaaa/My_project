@@ -175,7 +175,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.camera_mode_button = QtWidgets.QToolButton()
         self.camera_mode_button.setCheckable(True)
         self.camera_mode_button.setToolTip("拖动/框选切换")
-        self.camera_mode_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowCursor))
+        self.camera_mode_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_ArrowForward))
         self.camera_mode_button.clicked.connect(self.toggle_camera_mode)
         self.camera_toolbar.addStretch(1)
         self.camera_toolbar.addWidget(self.camera_mode_button)
@@ -732,7 +732,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if self._pan_mode is not None:
                 self.view_box.setMouseMode(self._pan_mode)
         icon = self.style().standardIcon(
-            QtWidgets.QStyle.StandardPixmap.SP_DialogOpenButton if mode == "select" else QtWidgets.QStyle.StandardPixmap.SP_ArrowCursor
+            QtWidgets.QStyle.StandardPixmap.SP_DialogOpenButton if mode == "select" else QtWidgets.QStyle.StandardPixmap.SP_ArrowForward
         )
         self.camera_mode_button.setIcon(icon)
 
