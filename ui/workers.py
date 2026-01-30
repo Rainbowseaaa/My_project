@@ -16,6 +16,7 @@ from ui.phase_utils import (
     load_hologram_file,
     load_mnist_sample,
     load_phase_file,
+    resize_and_embed,
     render_letter_field,
 )
 
@@ -96,23 +97,32 @@ class SLM1Worker(QtCore.QObject):
                         int(field_params.get("l", 0)),
                     )
                 elif field_params.get("mode") == "letter":
-                    amp, phase = render_letter_field(self._slm_shape, field_params.get("letter", "A"))
+                    size = field_params.get("size")
+                    if size and size[0] > 0 and size[1] > 0:
+                        amp, phase = render_letter_field((int(size[1]), int(size[0])), field_params.get("letter", "A"))
+                    else:
+                        amp, phase = render_letter_field(self._slm_shape, field_params.get("letter", "A"))
+                    amp, phase = resize_and_embed(amp, phase, self._slm_shape, size)
                 elif field_params.get("mode") == "mnist":
                     sample = load_mnist_sample(
                         int(field_params.get("index", 0)),
                         fashion=False,
                         data_dir=field_params.get("data_dir"),
                     )
-                    amp = np.asarray(Image.fromarray(sample).resize((self._slm_shape[1], self._slm_shape[0])), dtype=np.float64) / 255.0
+                    amp = np.asarray(sample, dtype=np.float64) / 255.0
                     phase = np.zeros_like(amp)
+                    size = field_params.get("size")
+                    amp, phase = resize_and_embed(amp, phase, self._slm_shape, size)
                 elif field_params.get("mode") == "fashion_mnist":
                     sample = load_mnist_sample(
                         int(field_params.get("index", 0)),
                         fashion=True,
                         data_dir=field_params.get("data_dir"),
                     )
-                    amp = np.asarray(Image.fromarray(sample).resize((self._slm_shape[1], self._slm_shape[0])), dtype=np.float64) / 255.0
+                    amp = np.asarray(sample, dtype=np.float64) / 255.0
                     phase = np.zeros_like(amp)
+                    size = field_params.get("size")
+                    amp, phase = resize_and_embed(amp, phase, self._slm_shape, size)
                 else:
                     amp, phase = load_field_file(image_path, self._slm_shape)
                 hologram_phase = bolduc_phase_encoding(amp, phase, self._period)
