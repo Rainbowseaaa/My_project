@@ -46,6 +46,7 @@ class CameraViewBox(pg.ViewBox):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._mode = "pan"
+        self._drag_start = None
 
     def set_mode(self, mode: str) -> None:
         self._mode = mode
@@ -53,9 +54,14 @@ class CameraViewBox(pg.ViewBox):
     def mouseDragEvent(self, ev, axis=None):
         if self._mode == "select" and ev.button() == QtCore.Qt.MouseButton.LeftButton:
             ev.accept()
-            start = ev.buttonDownScenePos()
+            if ev.isStart():
+                self._drag_start = ev.buttonDownScenePos()
+            if self._drag_start is None:
+                self._drag_start = ev.buttonDownScenePos()
             end = ev.scenePos()
-            self.select_drag.emit(start, end, ev.isFinish())
+            self.select_drag.emit(self._drag_start, end, ev.isFinish())
+            if ev.isFinish():
+                self._drag_start = None
             return
         super().mouseDragEvent(ev, axis=axis)
 
@@ -491,15 +497,11 @@ class MainWindow(QtWidgets.QMainWindow):
         load_mode = self.image_panel.load_mode_combo.currentData() or "file"
         if load_mode == "file":
             input_type = self.image_panel.input_type_combo.currentData() or "hologram"
-            field_mode = self.image_panel.field_mode_combo.currentData()
-            if input_type == "field" and field_mode != "file":
-                pass
-            else:
-                if not self.image_paths:
-                    self._collect_image_paths()
-                if not self.image_paths:
-                    self.log("未选择输入图像")
-                    return
+            if not self.image_paths:
+                self._collect_image_paths()
+            if not self.image_paths:
+                self.log("未选择输入图像")
+                return
         else:
             input_type = "field"
         if self.slm1_worker is None:
@@ -511,13 +513,9 @@ class MainWindow(QtWidgets.QMainWindow):
         load_mode = self.image_panel.load_mode_combo.currentData() or "file"
         if load_mode == "file":
             input_type = self.image_panel.input_type_combo.currentData() or "hologram"
-            field_mode = self.image_panel.field_mode_combo.currentData()
-            if input_type == "field" and field_mode != "file":
-                path = ""
-            else:
-                if not self.image_paths:
-                    return
-                path = str(self.image_paths[self.image_index])
+            if not self.image_paths:
+                return
+            path = str(self.image_paths[self.image_index])
         else:
             input_type = "field"
             path = ""
@@ -716,7 +714,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view_box.setRange(roi_bounds, padding=0.05)
 
     def reset_camera_view(self) -> None:
-        self.view_box.autoRange()
+        if self.image_item.image is None:
+            self.view_box.autoRange()
+            return
+        img = self.image_item.image
+        rect = QtCore.QRectF(0, 0, img.shape[1], img.shape[0])
+        self.view_box.setRange(rect, padding=0.05)
 
     def on_camera_mode_changed(self) -> None:
         mode = "select" if self.camera_mode_button.isChecked() else "pan"

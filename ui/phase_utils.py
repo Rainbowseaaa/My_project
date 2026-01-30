@@ -289,7 +289,10 @@ def _download_file(url: str, dest: Path) -> None:
 
 
 def _maybe_download_mnist(data_dir: Path, fashion: bool) -> None:
-    base = "http://fashion-mnist.s3-website.eu-central-1.amazonaws.com" if fashion else "http://yann.lecun.com/exdb/mnist"
+    bases = [
+        "https://fashion-mnist.s3.amazonaws.com" if fashion else "https://storage.googleapis.com/cvdf-datasets/mnist",
+        "http://fashion-mnist.s3-website.eu-central-1.amazonaws.com" if fashion else "http://yann.lecun.com/exdb/mnist",
+    ]
     files = [
         "train-images-idx3-ubyte.gz",
         "train-labels-idx1-ubyte.gz",
@@ -298,8 +301,19 @@ def _maybe_download_mnist(data_dir: Path, fashion: bool) -> None:
     ]
     for name in files:
         dest = data_dir / name
-        if not dest.exists():
-            _download_file(f"{base}/{name}", dest)
+        if dest.exists():
+            continue
+        last_exc = None
+        for base in bases:
+            try:
+                _download_file(f"{base}/{name}", dest)
+                last_exc = None
+                break
+            except Exception as exc:
+                last_exc = exc
+                continue
+        if last_exc is not None:
+            raise last_exc
 
 
 def _load_idx_images(path: Path) -> np.ndarray:

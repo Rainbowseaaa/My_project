@@ -283,7 +283,6 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.input_type_combo.addItem("光场(生成全息图)", userData="field")
 
         self.field_mode_combo = QtWidgets.QComboBox()
-        self.field_mode_combo.addItem("文件", userData="file")
         self.field_mode_combo.addItem("LG 光束", userData="lg")
         self.field_mode_combo.addItem("字母", userData="letter")
         self.field_mode_combo.addItem("MNIST", userData="mnist")
@@ -355,10 +354,7 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         mnist_widget = QtWidgets.QWidget()
         mnist_widget.setLayout(mnist_form)
 
-        empty_widget = QtWidgets.QWidget()
-
         self.field_stack = QtWidgets.QStackedWidget()
-        self.field_stack.addWidget(empty_widget)  # file
         self.field_stack.addWidget(lg_widget)
         self.field_stack.addWidget(letter_widget)
         self.field_stack.addWidget(mnist_widget)
@@ -450,13 +446,13 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.single_button.setEnabled(not is_continuous)
 
     def _update_field_mode(self) -> None:
-        mode = self.field_mode_combo.currentData() or "file"
+        mode = self.field_mode_combo.currentData() or "lg"
         if mode == "lg":
-            index = 1
+            index = 0
         elif mode == "letter":
-            index = 2
+            index = 1
         elif mode in {"mnist", "fashion_mnist"}:
-            index = 3
+            index = 2
         else:
             index = 0
         self.field_stack.setCurrentIndex(index)
