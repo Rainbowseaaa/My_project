@@ -726,6 +726,7 @@ def check_devices(config: Dict) -> None:
     check_dir = Path(output_cfg["scan_maps_dir"]).parent / "device_check"
     ensure_dir(str(check_dir))
 
+    ensure_hardware_imports()
     slm1 = SLM1Controller(config["slm1"], check_dir)
     slm2 = SLM2Controller(config["slm2"], check_dir)
     camera = CameraGX(config["camera"])
