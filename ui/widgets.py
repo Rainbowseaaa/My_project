@@ -419,6 +419,19 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.load_stack.addWidget(file_widget)
         self.load_stack.addWidget(gen_widget)
 
+        # --- Hologram params ---
+        self.period_spin = QtWidgets.QSpinBox()
+        self.period_spin.setRange(-200, 200)
+        self.period_spin.setValue(8)
+        self.period_spin.setToolTip("Bolduc grating period (sign controls direction)")
+
+        self.amp_norm_spin = QtWidgets.QDoubleSpinBox()
+        self.amp_norm_spin.setRange(0.0, 0.99)
+        self.amp_norm_spin.setDecimals(2)
+        self.amp_norm_spin.setSingleStep(0.01)
+        self.amp_norm_spin.setValue(0.90)
+        self.amp_norm_spin.setToolTip("Amplitude normalization max (0..0.99)")
+
         # --- 3. 播放控制 ---
         self.play_mode_combo = QtWidgets.QComboBox()
         self.play_mode_combo.addItem("单帧模式", userData="single")
@@ -489,6 +502,13 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         main_layout.addLayout(source_header)
         main_layout.addWidget(self.load_stack)
 
+        hologram_layout = QtWidgets.QHBoxLayout()
+        hologram_layout.addWidget(QtWidgets.QLabel("光栅周期(±)"))
+        hologram_layout.addWidget(self.period_spin)
+        hologram_layout.addWidget(QtWidgets.QLabel("幅度上限"))
+        hologram_layout.addWidget(self.amp_norm_spin)
+        main_layout.addLayout(hologram_layout)
+
         main_layout.addLayout(play_mode_layout)
         main_layout.addLayout(play_btn_layout)
 
@@ -526,6 +546,8 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.dataset_index_spin.valueChanged.connect(self.param_changed)
         self.field_width_spin.valueChanged.connect(self.param_changed)
         self.field_height_spin.valueChanged.connect(self.param_changed)
+        self.period_spin.valueChanged.connect(self.param_changed)
+        self.amp_norm_spin.valueChanged.connect(self.param_changed)
         self.flip_h_checkbox.stateChanged.connect(self.param_changed)
         self.flip_v_checkbox.stateChanged.connect(self.param_changed)
         self.slm1_comp_checkbox.stateChanged.connect(self.param_changed)

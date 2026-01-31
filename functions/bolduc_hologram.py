@@ -50,6 +50,18 @@ def bolduc_phase_encoding(amplitude, phase, period):
     return phi
 
 
+def bolduc_phase_encoding(amplitude, phase, period):
+    # Override the earlier definition to keep amplitude normalization external.
+    M = 1 + inverse_sinc_fast(amplitude) / np.pi
+    F = phase - np.pi * M
+    c, r = np.shape(amplitude)
+    X, Y = np.meshgrid(np.arange(r), np.arange(c))
+    X = X-np.mean(X)
+    phi = F + 2 * np.pi * X / period
+    phi = np.mod(phi, 2*np.pi)*M
+    return phi
+
+
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
     tar = target_field(l=[1], p=[0], Nx=1920, Ny=1200, w0=12e-4, dx=8e-6)

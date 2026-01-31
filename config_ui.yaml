@@ -2,6 +2,7 @@ slm1:
   device_type: "upo"  # upo 或 holoeye
   screen_num: 1
   bolduc_period: 8
+  amp_norm_max: 0.9
   compensation_path: ""
   play_interval_ms: 500
   sdk_path: ""

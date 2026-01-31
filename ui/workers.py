@@ -87,10 +87,16 @@ class SLM1Worker(QtCore.QObject):
         self._period = period
 
     # 参数签名增加 flip_h, flip_v
-    @QtCore.pyqtSlot(str, bool, str, str, object, bool, bool)
+    @QtCore.pyqtSlot(str, bool, str, str, object, int, float, bool, bool)
     def load_hologram(self, image_path: str, use_comp: bool, comp_path: str, input_type: str, field_params: dict,
-                      flip_h: bool, flip_v: bool) -> None:
+                      period: int, amp_norm_max: float, flip_h: bool, flip_v: bool) -> None:
         try:
+            period = int(period) if period else int(self._period)
+            amp_norm_max = float(amp_norm_max)
+            if amp_norm_max < 0.0:
+                amp_norm_max = 0.0
+            if amp_norm_max > 0.99:
+                amp_norm_max = 0.99
             # 1. 生成或加载基础数据
             if input_type == "hologram":
                 hologram_u8 = load_hologram_file(image_path, self._slm_shape)
@@ -127,6 +133,12 @@ class SLM1Worker(QtCore.QObject):
                 else:
                     amp, phase = load_field_file(image_path, self._slm_shape)
 
+                amp_max = float(np.max(amp)) if amp.size else 0.0
+                if amp_max > 0:
+                    amp = amp / amp_max * amp_norm_max
+                else:
+                    amp = np.zeros_like(amp)
+
                 # 光场层面的翻转
                 if flip_h:
                     amp = np.fliplr(amp)
@@ -135,7 +147,7 @@ class SLM1Worker(QtCore.QObject):
                     amp = np.flipud(amp)
                     phase = np.flipud(phase)
 
-                hologram_phase = bolduc_phase_encoding(amp, phase, self._period)
+                hologram_phase = bolduc_phase_encoding(amp, phase, period)
                 hologram_u8 = phase_to_uint8(hologram_phase)
 
             if use_comp and comp_path:

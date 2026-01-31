@@ -387,6 +387,11 @@ class MainWindow(QtWidgets.QMainWindow):
         interval_ms = int(self.config.get("slm1", {}).get("play_interval_ms", 500))
         self.image_panel.interval_spin.setValue(interval_ms)
 
+        slm1_period = int(self.config.get("slm1", {}).get("bolduc_period", 8))
+        self.image_panel.period_spin.setValue(slm1_period)
+        amp_norm_max = float(self.config.get("slm1", {}).get("amp_norm_max", 0.90))
+        self.image_panel.amp_norm_spin.setValue(min(max(amp_norm_max, 0.0), 0.99))
+
         # 加载层配置 (核心逻辑修改：偏移 -> 绝对坐标)
         layer_cfg = self.config.get("slm2", {}).get("layers", [])
         for idx, widget in enumerate(self.slm2_panel.layer_widgets):
@@ -585,6 +590,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         flip_h = self.image_panel.flip_h_checkbox.isChecked()
         flip_v = self.image_panel.flip_v_checkbox.isChecked()
+        period = int(self.image_panel.period_spin.value())
+        if period == 0:
+            self.log("光栅周期不能为 0")
+            return
+        amp_norm_max = float(self.image_panel.amp_norm_spin.value())
 
         field_params = {
             "mode": "file" if (
@@ -607,6 +617,8 @@ class MainWindow(QtWidgets.QMainWindow):
             QtCore.Q_ARG(str, comp_path),
             QtCore.Q_ARG(str, input_type),
             QtCore.Q_ARG(object, field_params),
+            QtCore.Q_ARG(int, period),
+            QtCore.Q_ARG(float, amp_norm_max),
             QtCore.Q_ARG(bool, flip_h),
             QtCore.Q_ARG(bool, flip_v),
         )

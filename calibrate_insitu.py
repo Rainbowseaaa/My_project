@@ -292,13 +292,13 @@ class CameraGX(CameraBase):
         gx = import_module("gxipy")
         self.gx = gx
         self.device_manager = gx.DeviceManager()
-        self.device_manager.update_device_list()
+        dev_num, _ = self.device_manager.update_device_list()
         self.image_convert = self.device_manager.create_image_format_convert()
         device_sn = config.get("device_sn") or ""
         if device_sn:
             self.cam = self.device_manager.open_device_by_sn(device_sn)
         else:
-            if self.device_manager.device_num == 0:
+            if dev_num == 0:
                 raise RuntimeError("未检测到相机设备")
             self.cam = self.device_manager.open_device_by_index(1)
         self._setup_camera(config)
@@ -376,7 +376,20 @@ class MockCamera(CameraBase):
 
 class SLM1Controller:
     def __init__(self, config: Dict, output_dir: Path):
-        from UPO_SLM_80Rplus.SLM_UPOLabs import SLM_UP
+        from importlib import util
+
+        sdk_path = config.get("sdk_path")
+        if sdk_path and util.find_spec("UPO_SLM_80Rplus") is None:
+            candidate = str(Path(sdk_path).expanduser().resolve())
+            if candidate not in sys.path:
+                sys.path.insert(0, candidate)
+
+        try:
+            from UPO_SLM_80Rplus.SLM_UPOLabs import SLM_UP
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "未找到 SLM1 SDK，请确认 UPO_SLM_80Rplus 已安装或在 config_ui.yaml 的 slm1.sdk_path 中指定路径。"
+            ) from exc
 
         self.slm = SLM_UP()
         self.screen_num = int(config.get("screen_num", 1))
@@ -428,8 +441,8 @@ class SLM2Controller:
         img = Image.fromarray(img_u8)
         path = self.output_dir / "slm2_temp.bmp"
         img.save(path)
-        if hasattr(self.slm, "showCGHFromImageFile"):
-            err = self.slm.showCGHFromImageFile(str(path))
+        if hasattr(self.slm, "showPhaseDataFromFile"):
+            err = self.slm.showPhaseDataFromFile(str(path))
         elif hasattr(self.slm, "showDataFromImageFile"):
             err = self.slm.showDataFromImageFile(str(path))
         else:
@@ -441,8 +454,8 @@ class SLM2Controller:
         img = Image.fromarray(img_u8)
         path = self.output_dir / "slm2_temp.bmp"
         img.save(path)
-        if hasattr(self.slm, "showCGHFromImageFile"):
-            err = self.slm.showCGHFromImageFile(str(path))
+        if hasattr(self.slm, "showImageDataFromFile"):
+            err = self.slm.showImageDataFromFile(str(path))
         elif hasattr(self.slm, "showDataFromImageFile"):
             err = self.slm.showDataFromImageFile(str(path))
         else:
