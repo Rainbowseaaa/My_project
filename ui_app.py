@@ -129,11 +129,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.image_panel.param_changed.connect(self.on_slm1_auto_apply_change)
         self.image_panel.auto_apply_checkbox.stateChanged.connect(self.on_slm1_auto_apply_change)
 
-        # SLM2 连接
+        # SLM2 连接 (注意 offset_changed 改为了 center_changed)
         for widget in self.slm2_panel.layer_widgets:
             widget.file_changed.connect(self.on_layer_change)
             widget.enabled_changed.connect(self.on_layer_change)
-            widget.offset_changed.connect(self.on_layer_change)
+            widget.center_changed.connect(self.on_layer_change)
             widget.flip_changed.connect(self.on_layer_change)
 
         self.slm2_panel.apply_button.clicked.connect(self.apply_slm2)
@@ -368,6 +368,11 @@ class MainWindow(QtWidgets.QMainWindow):
         slm2_comp = self.config.get("slm2", {}).get("compensation_path", "")
         slm1_type = self.config.get("slm1", {}).get("device_type", "upo")
         slm2_type = self.config.get("slm2", {}).get("device_type", "holoeye")
+
+        # 确定 SLM2 分辨率以计算默认中心
+        slm2_shape = self._slm_shape_for_type(slm2_type)
+        default_centers = self.config.get("slm2", {}).get("default_centers", [])
+
         if slm1_comp:
             self.image_panel.slm1_comp_edit.setText(slm1_comp)
         if slm2_comp:
@@ -382,13 +387,29 @@ class MainWindow(QtWidgets.QMainWindow):
         interval_ms = int(self.config.get("slm1", {}).get("play_interval_ms", 500))
         self.image_panel.interval_spin.setValue(interval_ms)
 
+        # 加载层配置 (核心逻辑修改：偏移 -> 绝对坐标)
+        layer_cfg = self.config.get("slm2", {}).get("layers", [])
         for idx, widget in enumerate(self.slm2_panel.layer_widgets):
-            layer_cfg = self.config.get("slm2", {}).get("layers", [])
+            # 1. 计算基准中心
+            if idx < len(default_centers):
+                base_center = default_centers[idx]
+            else:
+                base_center = [slm2_shape[1] // 2, slm2_shape[0] // 2]
+
+            # 2. 如果配置文件有 dx/dy，则加到基准中心上；如果有直接的 cx/cy 则直接用（兼容性）
             if idx < len(layer_cfg):
                 widget.file_edit.setText(layer_cfg[idx].get("path", ""))
-                widget.dx_spin.setValue(int(layer_cfg[idx].get("dx", 0)))
-                widget.dy_spin.setValue(int(layer_cfg[idx].get("dy", 0)))
                 widget.enable_checkbox.setChecked(bool(layer_cfg[idx].get("enabled", True)))
+
+                # 读取保存的偏移量
+                dx = int(layer_cfg[idx].get("dx", 0))
+                dy = int(layer_cfg[idx].get("dy", 0))
+
+                # 填入绝对坐标
+                widget.set_center(base_center[0] + dx, base_center[1] + dy)
+            else:
+                # 只有默认中心
+                widget.set_center(base_center[0], base_center[1])
 
         exposure_us = float(self.config.get("camera", {}).get("exposure_us", 20000))
         self.camera_control.exposure_spin.setValue(exposure_us)
@@ -644,19 +665,17 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                                                       "holoeye")
             slm2_shape = self._slm_shape_for_type(slm2_type)
         window_size = tuple(self.config.get("slm2", {}).get("window_size_px", [400, 400]))
-        center_defaults = self.config.get("slm2", {}).get("default_centers", [])
+        # center_defaults 逻辑已经在 _load_defaults 里用来设置初始值了
+        # 这里直接读取 widget 的绝对坐标即可
 
         layers = []
         centers = []
         enabled = []
 
         for idx, layer in enumerate(self.slm2_panel.get_layers()):
-            if idx < len(center_defaults):
-                base_center = center_defaults[idx]
-            else:
-                base_center = [slm2_shape[1] // 2, slm2_shape[0] // 2]
-            cx = int(base_center[0] + layer.dx)
-            cy = int(base_center[1] + layer.dy)
+            # 直接使用绝对坐标
+            cx = layer.cx
+            cy = layer.cy
 
             phase = np.zeros(window_size, dtype=np.float64)
             if layer.file_path:
