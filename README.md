@@ -28,10 +28,10 @@ python ui_app.py --mock
 
 ### 校准可视化
 
-如需在 `ui_calibrate.py` 运行时显示校准层数、中心位置、相机画面与热图，可使用：
+如需在 `calibrate_insitu.py` 运行时显示校准层数、中心位置、相机画面与热图，可使用：
 
 ```bash
-python ui_calibrate.py --mock
+python calibrate_insitu.py --visualize --mock
 ```
 
 ### 配置文件
