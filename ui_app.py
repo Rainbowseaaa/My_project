@@ -184,7 +184,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.camera_mode_button.clicked.connect(self.toggle_camera_mode)
         self.camera_zoom_button = QtWidgets.QToolButton()
         self.camera_zoom_button.setToolTip("缩放到 ROI")
-        self.camera_zoom_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogZoomButton))
+        self.camera_zoom_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogYesButton))
         self.camera_zoom_button.clicked.connect(self.zoom_to_roi)
         self.camera_reset_button = QtWidgets.QToolButton()
         self.camera_reset_button.setToolTip("视图复位")
