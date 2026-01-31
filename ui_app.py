@@ -221,7 +221,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.roi.addScaleHandle([0, 1], [1, 0])
         self.roi.addScaleHandle([1, 1], [0, 0])
         self.roi.addTranslateHandle([0.5, 0.5])
-        self.roi.setSelectable(True)
+        if hasattr(self.roi, "setSelectable"):
+            self.roi.setSelectable(True)
         self.roi.setVisible(False)
         self.view_box.addItem(self.roi)
         self.roi.sigRegionChanged.connect(self.update_roi_stats)
@@ -777,13 +778,19 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.roi.setPos((x0, y0))
         self.roi.setSize((x1 - x0, y1 - y0))
+        if hasattr(self.roi, "setSelected"):
+            self.roi.setSelected(True)
         if finished:
             self.on_roi_changed()
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
-        if self.roi.isVisible() and self.roi.isSelected():
+        selected = True
+        if hasattr(self.roi, "isSelected"):
+            selected = self.roi.isSelected()
+        if self.roi.isVisible() and selected:
             if event.key() in (QtCore.Qt.Key.Key_Escape, QtCore.Qt.Key.Key_Delete, QtCore.Qt.Key.Key_Backspace):
-                self.roi.setSelected(False)
+                if hasattr(self.roi, "setSelected"):
+                    self.roi.setSelected(False)
                 self.roi.setVisible(False)
                 return
         super().keyPressEvent(event)
