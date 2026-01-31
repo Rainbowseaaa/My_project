@@ -72,6 +72,9 @@ class CameraWorker(QtCore.QObject):
                 self.error.emit(str(exc))
 
 
+# [ui/workers.py]
+# 重点修改 SLM1Worker，其他类如 CameraWorker 无需大改
+
 class SLM1Worker(QtCore.QObject):
     status = QtCore.pyqtSignal(str)
     error = QtCore.pyqtSignal(str)
@@ -83,12 +86,19 @@ class SLM1Worker(QtCore.QObject):
         self._slm_shape = slm_shape
         self._period = period
 
-    @QtCore.pyqtSlot(str, bool, str, str, object)
-    def load_hologram(self, image_path: str, use_comp: bool, comp_path: str, input_type: str, field_params: dict) -> None:
+    # 参数签名增加 flip_h, flip_v
+    @QtCore.pyqtSlot(str, bool, str, str, object, bool, bool)
+    def load_hologram(self, image_path: str, use_comp: bool, comp_path: str, input_type: str, field_params: dict,
+                      flip_h: bool, flip_v: bool) -> None:
         try:
+            # 1. 生成或加载基础数据
             if input_type == "hologram":
                 hologram_u8 = load_hologram_file(image_path, self._slm_shape)
+                # 如果是直接全息图，直接翻转 uint8
+                if flip_h: hologram_u8 = np.fliplr(hologram_u8)
+                if flip_v: hologram_u8 = np.flipud(hologram_u8)
             else:
+                # 这是一个生成光场的过程
                 if field_params.get("mode") == "lg":
                     amp, phase = generate_lg_field(
                         self._slm_shape,
@@ -103,20 +113,11 @@ class SLM1Worker(QtCore.QObject):
                     else:
                         amp, phase = render_letter_field(self._slm_shape, field_params.get("letter", "A"))
                     amp, phase = resize_and_embed(amp, phase, self._slm_shape, size)
-                elif field_params.get("mode") == "mnist":
+                elif field_params.get("mode") in ("mnist", "fashion_mnist"):
+                    is_fashion = (field_params.get("mode") == "fashion_mnist")
                     sample = load_mnist_sample(
                         int(field_params.get("index", 0)),
-                        fashion=False,
-                        data_dir=field_params.get("data_dir"),
-                    )
-                    amp = np.asarray(sample, dtype=np.float64) / 255.0
-                    phase = np.zeros_like(amp)
-                    size = field_params.get("size")
-                    amp, phase = resize_and_embed(amp, phase, self._slm_shape, size)
-                elif field_params.get("mode") == "fashion_mnist":
-                    sample = load_mnist_sample(
-                        int(field_params.get("index", 0)),
-                        fashion=True,
+                        fashion=is_fashion,
                         data_dir=field_params.get("data_dir"),
                     )
                     amp = np.asarray(sample, dtype=np.float64) / 255.0
@@ -125,6 +126,15 @@ class SLM1Worker(QtCore.QObject):
                     amp, phase = resize_and_embed(amp, phase, self._slm_shape, size)
                 else:
                     amp, phase = load_field_file(image_path, self._slm_shape)
+
+                # 光场层面的翻转
+                if flip_h:
+                    amp = np.fliplr(amp)
+                    phase = np.fliplr(phase)
+                if flip_v:
+                    amp = np.flipud(amp)
+                    phase = np.flipud(phase)
+
                 hologram_phase = bolduc_phase_encoding(amp, phase, self._period)
                 hologram_u8 = phase_to_uint8(hologram_phase)
 
@@ -139,6 +149,8 @@ class SLM1Worker(QtCore.QObject):
             name = Path(image_path).name if image_path else "generated"
             self.status.emit(f"SLM1 加载完成: {name}")
         except Exception as exc:
+            import traceback
+            traceback.print_exc()
             self.error.emit(str(exc))
 
 

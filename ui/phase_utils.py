@@ -94,12 +94,15 @@ def load_compensation(path: str, shape: Tuple[int, int], meaning: str = "encoded
     return resize_phase(comp, shape)
 
 
+# [ui/phase_utils.py]
+# 只需更新 compose_layers 函数，其他保持不变，但为了方便，这里给出 compose_layers 的完整代码
+
 def compose_layers(
-    slm_shape: Tuple[int, int],
-    window_size: Tuple[int, int],
-    layers: List[Dict],
-    outside_mode: str = "zero",
-    block_mode: str = "checkerboard",
+        slm_shape: Tuple[int, int],
+        window_size: Tuple[int, int],
+        layers: List[Dict],  # 字典现在包含 'flip_h', 'flip_v'
+        outside_mode: str = "zero",
+        block_mode: str = "checkerboard",
 ) -> Tuple[np.ndarray, List[Tuple[int, int, int, int]]]:
     height, width = slm_shape
     win_h, win_w = window_size
@@ -108,7 +111,6 @@ def compose_layers(
         base = np.zeros((height, width), dtype=np.float64)
     elif outside_mode == "block":
         from calibrate_insitu import blocking_phase
-
         base = blocking_phase(slm_shape, block_mode).astype(np.float64)
     else:
         raise ValueError(f"未知 outside_mode: {outside_mode}")
@@ -119,7 +121,15 @@ def compose_layers(
         if not layer.get("enabled", True):
             rects.append((0, 0, 0, 0))
             continue
+
         phase = layer["phase"]
+
+        # 处理单独层的翻转
+        if layer.get("flip_h", False):
+            phase = np.fliplr(phase)
+        if layer.get("flip_v", False):
+            phase = np.flipud(phase)
+
         cx, cy = layer["center"]
         top = int(round(cy - win_h / 2))
         left = int(round(cx - win_w / 2))
@@ -141,7 +151,6 @@ def compose_layers(
         rects.append((left_clip, top_clip, right_clip - left_clip, bottom_clip - top_clip))
 
     return _normalize_phase(base), rects
-
 
 def make_preview_image(
     slm_shape: Tuple[int, int],

@@ -121,21 +121,30 @@ class MainWindow(QtWidgets.QMainWindow):
         self.image_panel.next_button.clicked.connect(self.show_next_image)
         self.image_panel.run_button.clicked.connect(self.start_slm1)
         self.image_panel.stop_button.clicked.connect(self.stop_slm1)
-        self.image_panel.auto_apply_checkbox.stateChanged.connect(self.on_slm1_auto_apply_change)
-        self.image_panel.slm1_comp_checkbox.stateChanged.connect(self.on_slm1_auto_apply_change)
-        self.image_panel.slm1_comp_edit.textChanged.connect(self.on_slm1_auto_apply_change)
 
+        # SLM1 Auto Apply: 使用 param_changed 信号
+        self.image_panel.param_changed.connect(self.on_slm1_auto_apply_change)
+        # 兼容旧逻辑，保留 auto_apply_checkbox 的直接连接
+        self.image_panel.auto_apply_checkbox.stateChanged.connect(self.on_slm1_auto_apply_change)
+
+        # SLM2 信号连接
         for widget in self.slm2_panel.layer_widgets:
             widget.file_changed.connect(self.on_layer_change)
             widget.enabled_changed.connect(self.on_layer_change)
             widget.offset_changed.connect(self.on_layer_change)
+            widget.flip_changed.connect(self.on_layer_change)  # 连接翻转信号
 
         self.slm2_panel.apply_button.clicked.connect(self.apply_slm2)
+        # SLM2 全局翻转连接
+        self.slm2_panel.global_flip_h.stateChanged.connect(self.on_layer_change)
+        self.slm2_panel.global_flip_v.stateChanged.connect(self.on_layer_change)
+
         self.preview_panel.display_mode_changed.connect(lambda _: self.update_preview())
         self.slm2_panel.run_button.clicked.connect(self.start_slm2)
         self.slm2_panel.stop_button.clicked.connect(self.stop_slm2)
         self.slm2_panel.slm2_comp_checkbox.stateChanged.connect(self.on_layer_change)
         self.slm2_panel.slm2_comp_edit.textChanged.connect(self.on_layer_change)
+        self.slm2_panel.auto_apply_checkbox.stateChanged.connect(self.on_layer_change)  # SLM2 的 auto apply
 
         self.run_button.clicked.connect(self.run_all)
         self.stop_button.clicked.connect(self.stop_all)
@@ -321,7 +330,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         try:
             if self.mock:
-                slm2_type = self.slm2_panel.device_combo.currentData() or self.config.get("slm2", {}).get("device_type", "holoeye")
+                slm2_type = self.slm2_panel.device_combo.currentData() or self.config.get("slm2", {}).get("device_type",
+                                                                                                          "holoeye")
                 slm2_shape = self._slm_shape_for_type(slm2_type)
                 self.camera = MockCamera(self.config.get("mock", {}), slm2_shape)
             else:
@@ -400,21 +410,25 @@ class MainWindow(QtWidgets.QMainWindow):
         slm2_dir.mkdir(parents=True, exist_ok=True)
 
         if role == "slm1":
-            device_type = self.image_panel.device_combo.currentData() or self.config.get("slm1", {}).get("device_type", "upo")
+            device_type = self.image_panel.device_combo.currentData() or self.config.get("slm1", {}).get("device_type",
+                                                                                                         "upo")
             cfg = dict(self.config.get("slm1", {}))
             if device_type == "holoeye" and not cfg.get("sdk_path"):
                 cfg["sdk_path"] = self.config.get("slm2", {}).get("sdk_path", "")
             if device_type == "upo":
                 return MockSLM1(self._slm_shape_for_type(device_type)) if self.mock else SLM1Controller(cfg, slm1_dir)
-            return MockSLM2({"slm2_size": self._slm_shape_for_type(device_type)}) if self.mock else SLM2Controller(cfg, slm1_dir)
+            return MockSLM2({"slm2_size": self._slm_shape_for_type(device_type)}) if self.mock else SLM2Controller(cfg,
+                                                                                                                   slm1_dir)
 
-        device_type = self.slm2_panel.device_combo.currentData() or self.config.get("slm2", {}).get("device_type", "holoeye")
+        device_type = self.slm2_panel.device_combo.currentData() or self.config.get("slm2", {}).get("device_type",
+                                                                                                    "holoeye")
         cfg = dict(self.config.get("slm2", {}))
         if device_type == "upo":
             if "screen_num" not in cfg:
                 cfg["screen_num"] = self.config.get("slm1", {}).get("screen_num", 1)
             return MockSLM1(self._slm_shape_for_type(device_type)) if self.mock else SLM1Controller(cfg, slm2_dir)
-        return MockSLM2({"slm2_size": self._slm_shape_for_type(device_type)}) if self.mock else SLM2Controller(cfg, slm2_dir)
+        return MockSLM2({"slm2_size": self._slm_shape_for_type(device_type)}) if self.mock else SLM2Controller(cfg,
+                                                                                                               slm2_dir)
 
     def _start_workers(self) -> None:
         self.start_slm1()
@@ -537,8 +551,14 @@ class MainWindow(QtWidgets.QMainWindow):
             path = ""
         use_comp = self.image_panel.slm1_comp_checkbox.isChecked()
         comp_path = self.image_panel.slm1_comp_edit.text().strip()
+
+        # 获取 SLM1 翻转状态
+        flip_h = self.image_panel.flip_h_checkbox.isChecked()
+        flip_v = self.image_panel.flip_v_checkbox.isChecked()
+
         field_params = {
-            "mode": "file" if (load_mode == "file" and input_type == "field") else self.image_panel.field_mode_combo.currentData(),
+            "mode": "file" if (
+                        load_mode == "file" and input_type == "field") else self.image_panel.field_mode_combo.currentData(),
             "w0": self.image_panel.lg_w0_spin.value(),
             "p": self.image_panel.lg_p_spin.value(),
             "l": self.image_panel.lg_l_spin.value(),
@@ -556,6 +576,8 @@ class MainWindow(QtWidgets.QMainWindow):
             QtCore.Q_ARG(str, comp_path),
             QtCore.Q_ARG(str, input_type),
             QtCore.Q_ARG(object, field_params),
+            QtCore.Q_ARG(bool, flip_h),
+            QtCore.Q_ARG(bool, flip_v),
         )
 
     def on_layer_change(self, _: int) -> None:
@@ -574,6 +596,13 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as exc:
             self.log(f"SLM2 合成失败: {exc}")
             return
+
+        # SLM2 全局翻转
+        if self.slm2_panel.global_flip_h.isChecked():
+            phase = np.fliplr(phase)
+        if self.slm2_panel.global_flip_v.isChecked():
+            phase = np.flipud(phase)
+
         if self.slm2_worker is None:
             self.log("SLM2 未初始化，请先 Run")
             self.update_preview()
@@ -601,7 +630,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.slm2_controller is not None:
             slm2_shape = (self.slm2_controller.height, self.slm2_controller.width)
         else:
-            slm2_type = self.slm2_panel.device_combo.currentData() or self.config.get("slm2", {}).get("device_type", "holoeye")
+            slm2_type = self.slm2_panel.device_combo.currentData() or self.config.get("slm2", {}).get("device_type",
+                                                                                                      "holoeye")
             slm2_shape = self._slm_shape_for_type(slm2_type)
         window_size = tuple(self.config.get("slm2", {}).get("window_size_px", [400, 400]))
         center_defaults = self.config.get("slm2", {}).get("default_centers", [])
@@ -620,9 +650,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
             phase = np.zeros(window_size, dtype=np.float64)
             if layer.file_path:
-                phase = load_phase_file(layer.file_path, meaning="auto", mat_key=self.config.get("slm2", {}).get("mat_key", "phase"))
+                phase = load_phase_file(layer.file_path, meaning="auto",
+                                        mat_key=self.config.get("slm2", {}).get("mat_key", "phase"))
 
-            layers.append({"phase": phase, "center": (cx, cy), "enabled": layer.enabled})
+            # 传入每个层的翻转参数到字典
+            layers.append({
+                "phase": phase,
+                "center": (cx, cy),
+                "enabled": layer.enabled,
+                "flip_h": layer.flip_h,
+                "flip_v": layer.flip_v
+            })
             centers.append((cx, cy))
             enabled.append(layer.enabled)
 
@@ -660,7 +698,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.slm2_controller is not None:
             slm2_shape = (self.slm2_controller.height, self.slm2_controller.width)
         else:
-            slm2_type = self.slm2_panel.device_combo.currentData() or self.config.get("slm2", {}).get("device_type", "holoeye")
+            slm2_type = self.slm2_panel.device_combo.currentData() or self.config.get("slm2", {}).get("device_type",
+                                                                                                      "holoeye")
             slm2_shape = self._slm_shape_for_type(slm2_type)
         mode = self.preview_panel.display_mode()
         base_phase = None
@@ -684,6 +723,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.preview_panel.update_pixmap(pixmap)
 
     def update_frame(self, frame: np.ndarray, fps: float) -> None:
+        # 相机画面翻转处理
+        if self.camera_control.flip_h.isChecked():
+            frame = np.fliplr(frame)
+        if self.camera_control.flip_v.isChecked():
+            frame = np.flipud(frame)
+
         self.image_item.setImage(frame, autoLevels=True)
         self.view_box.setAspectLocked(True, ratio=frame.shape[1] / frame.shape[0])
         self.status_panel.update_status(fps=fps)

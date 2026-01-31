@@ -1,3 +1,6 @@
+# [ui/widgets.py] 
+# 请替换整个文件或对应的类
+
 from dataclasses import dataclass
 from typing import List
 
@@ -10,12 +13,16 @@ class LayerConfig:
     file_path: str
     dx: int
     dy: int
+    flip_h: bool  # 新增
+    flip_v: bool  # 新增
 
 
 class LayerWidget(QtWidgets.QGroupBox):
     file_changed = QtCore.pyqtSignal(int)
     enabled_changed = QtCore.pyqtSignal(int)
     offset_changed = QtCore.pyqtSignal(int)
+    # 翻转改变也可以触发刷新
+    flip_changed = QtCore.pyqtSignal(int)
 
     def __init__(self, index: int, parent=None):
         super().__init__(parent)
@@ -25,17 +32,24 @@ class LayerWidget(QtWidgets.QGroupBox):
         self.enable_checkbox = QtWidgets.QCheckBox("启用")
         self.enable_checkbox.setChecked(True)
         self.file_edit = QtWidgets.QLineEdit()
-        self.file_button = QtWidgets.QPushButton("选择相位文件")
+        self.file_button = QtWidgets.QPushButton("...")  # 简化按钮文字节省空间
         self.dx_spin = QtWidgets.QSpinBox()
         self.dy_spin = QtWidgets.QSpinBox()
         self.dx_spin.setRange(-2000, 2000)
         self.dy_spin.setRange(-2000, 2000)
-        self.dx_spin.setSingleStep(1)
-        self.dy_spin.setSingleStep(1)
 
-        offset_layout = QtWidgets.QFormLayout()
-        offset_layout.addRow("dx (px)", self.dx_spin)
-        offset_layout.addRow("dy (px)", self.dy_spin)
+        # 新增翻转控件
+        self.flip_h_check = QtWidgets.QCheckBox("H翻转")
+        self.flip_v_check = QtWidgets.QCheckBox("V翻转")
+
+        # 布局调整
+        ctrl_layout = QtWidgets.QHBoxLayout()
+        ctrl_layout.addWidget(QtWidgets.QLabel("dx:"))
+        ctrl_layout.addWidget(self.dx_spin)
+        ctrl_layout.addWidget(QtWidgets.QLabel("dy:"))
+        ctrl_layout.addWidget(self.dy_spin)
+        ctrl_layout.addWidget(self.flip_h_check)
+        ctrl_layout.addWidget(self.flip_v_check)
 
         file_layout = QtWidgets.QHBoxLayout()
         file_layout.addWidget(self.file_edit, 1)
@@ -44,20 +58,19 @@ class LayerWidget(QtWidgets.QGroupBox):
         layout = QtWidgets.QVBoxLayout()
         layout.addWidget(self.enable_checkbox)
         layout.addLayout(file_layout)
-        layout.addLayout(offset_layout)
+        layout.addLayout(ctrl_layout)
         self.setLayout(layout)
 
         self.file_button.clicked.connect(self._pick_file)
         self.enable_checkbox.stateChanged.connect(lambda _: self.enabled_changed.emit(self.index))
         self.dx_spin.valueChanged.connect(lambda _: self.offset_changed.emit(self.index))
         self.dy_spin.valueChanged.connect(lambda _: self.offset_changed.emit(self.index))
+        self.flip_h_check.stateChanged.connect(lambda _: self.flip_changed.emit(self.index))
+        self.flip_v_check.stateChanged.connect(lambda _: self.flip_changed.emit(self.index))
 
     def _pick_file(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self,
-            "选择相位文件",
-            "",
-            "Phase Files (*.npy *.png *.bmp *.mat *.tif *.tiff)",
+            self, "选择相位文件", "", "Phase Files (*.npy *.png *.bmp *.mat *.tif *.tiff)"
         )
         if path:
             self.file_edit.setText(path)
@@ -69,8 +82,13 @@ class LayerWidget(QtWidgets.QGroupBox):
             file_path=self.file_edit.text().strip(),
             dx=self.dx_spin.value(),
             dy=self.dy_spin.value(),
+            flip_h=self.flip_h_check.isChecked(),
+            flip_v=self.flip_v_check.isChecked()
         )
 
+
+# ... LogPanel, StatusPanel, PreviewPanel, ZoomLabel, RoiStatsPanel, PlayerControls 保持不变 ...
+# 为了节省篇幅，这里省略中间未变动的类，请保留它们
 
 class LogPanel(QtWidgets.QGroupBox):
     def __init__(self, parent=None):
@@ -104,12 +122,12 @@ class StatusPanel(QtWidgets.QGroupBox):
         self.setLayout(layout)
 
     def update_status(
-        self,
-        image_name: str = None,
-        fps: float = None,
-        slm1: str = None,
-        slm2: str = None,
-        overexposure: str = None,
+            self,
+            image_name: str = None,
+            fps: float = None,
+            slm1: str = None,
+            slm2: str = None,
+            overexposure: str = None,
     ) -> None:
         if image_name is not None:
             self.image_label.setText(f"当前图像: {image_name}")
@@ -264,6 +282,9 @@ class PlayerControls(QtWidgets.QGroupBox):
 
 
 class ImageSourcePanel(QtWidgets.QGroupBox):
+    # 定义 Auto Apply 信号，方便外部连接
+    param_changed = QtCore.pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__("SLM1 输入图像", parent)
         self.device_combo = QtWidgets.QComboBox()
@@ -291,7 +312,6 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.lg_w0_spin = QtWidgets.QDoubleSpinBox()
         self.lg_w0_spin.setRange(1.0, 1000.0)
         self.lg_w0_spin.setValue(80.0)
-        self.lg_w0_spin.setSuffix(" px")
         self.lg_p_spin = QtWidgets.QSpinBox()
         self.lg_p_spin.setRange(0, 10)
         self.lg_l_spin = QtWidgets.QSpinBox()
@@ -301,36 +321,38 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.dataset_index_spin.setRange(0, 9999)
         self.field_width_spin = QtWidgets.QSpinBox()
         self.field_width_spin.setRange(0, 4000)
-        self.field_width_spin.setValue(0)
         self.field_height_spin = QtWidgets.QSpinBox()
         self.field_height_spin.setRange(0, 4000)
-        self.field_height_spin.setValue(0)
 
+        # 播放控制
         self.play_mode_combo = QtWidgets.QComboBox()
         self.play_mode_combo.addItem("单帧", userData="single")
         self.play_mode_combo.addItem("连续", userData="continuous")
         self.interval_spin = QtWidgets.QSpinBox()
         self.interval_spin.setRange(50, 5000)
         self.interval_spin.setValue(500)
-        self.interval_spin.setSuffix(" ms")
 
-        self.prev_button = QtWidgets.QPushButton("上一张")
-        self.next_button = QtWidgets.QPushButton("下一张")
+        self.prev_button = QtWidgets.QPushButton("上")
+        self.next_button = QtWidgets.QPushButton("下")
         self.loop_checkbox = QtWidgets.QCheckBox("循环")
         self.loop_checkbox.setChecked(True)
 
         self.single_button = QtWidgets.QPushButton("显示单帧")
-        self.play_button = QtWidgets.QPushButton("开始连续")
-        self.stop_play_button = QtWidgets.QPushButton("停止连续")
+        self.play_button = QtWidgets.QPushButton("开始")
+        self.stop_play_button = QtWidgets.QPushButton("停止")
         self.run_button = QtWidgets.QPushButton("Run SLM1")
         self.stop_button = QtWidgets.QPushButton("Stop SLM1")
 
-        self.slm1_comp_checkbox = QtWidgets.QCheckBox("叠加 SLM1 补偿")
+        self.slm1_comp_checkbox = QtWidgets.QCheckBox("叠加补偿")
         self.slm1_comp_edit = QtWidgets.QLineEdit()
-        self.slm1_comp_button = QtWidgets.QPushButton("选择补偿文件")
+        self.slm1_comp_button = QtWidgets.QPushButton("...")
         self.auto_apply_checkbox = QtWidgets.QCheckBox("Auto Apply")
-        self.auto_apply_checkbox.setChecked(False)
 
+        # SLM1 全局翻转
+        self.flip_h_checkbox = QtWidgets.QCheckBox("H翻转")
+        self.flip_v_checkbox = QtWidgets.QCheckBox("V翻转")
+
+        # 布局
         file_layout = QtWidgets.QGridLayout()
         file_layout.addWidget(QtWidgets.QLabel("输入类型"), 0, 0)
         file_layout.addWidget(self.input_type_combo, 0, 1)
@@ -338,10 +360,6 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         file_layout.addWidget(self.image_button, 1, 1)
         file_layout.addWidget(self.folder_edit, 2, 0)
         file_layout.addWidget(self.folder_button, 2, 1)
-        file_layout.addWidget(self.prev_button, 3, 0)
-        file_layout.addWidget(self.next_button, 3, 1)
-        file_layout.addWidget(self.loop_checkbox, 4, 0)
-
         file_widget = QtWidgets.QWidget()
         file_widget.setLayout(file_layout)
 
@@ -358,7 +376,7 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         letter_widget.setLayout(letter_form)
 
         mnist_form = QtWidgets.QFormLayout()
-        mnist_form.addRow("数据集索引", self.dataset_index_spin)
+        mnist_form.addRow("索引", self.dataset_index_spin)
         mnist_widget = QtWidgets.QWidget()
         mnist_widget.setLayout(mnist_form)
 
@@ -367,16 +385,15 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.field_stack.addWidget(letter_widget)
         self.field_stack.addWidget(mnist_widget)
 
-        gen_layout = QtWidgets.QGridLayout()
-        gen_layout.addWidget(QtWidgets.QLabel("光场类型"), 0, 0)
-        gen_layout.addWidget(self.field_mode_combo, 0, 1)
-        gen_layout.addWidget(self.field_stack, 1, 0, 1, 2)
+        gen_layout = QtWidgets.QVBoxLayout()
+        gen_layout.addWidget(self.field_mode_combo)
+        gen_layout.addWidget(self.field_stack)
         size_layout = QtWidgets.QHBoxLayout()
-        size_layout.addWidget(QtWidgets.QLabel("宽(px)"))
+        size_layout.addWidget(QtWidgets.QLabel("Size:"))
         size_layout.addWidget(self.field_width_spin)
-        size_layout.addWidget(QtWidgets.QLabel("高(px)"))
+        size_layout.addWidget(QtWidgets.QLabel("x"))
         size_layout.addWidget(self.field_height_spin)
-        gen_layout.addLayout(size_layout, 2, 0, 1, 2)
+        gen_layout.addLayout(size_layout)
         gen_widget = QtWidgets.QWidget()
         gen_widget.setLayout(gen_layout)
 
@@ -384,68 +401,90 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.load_stack.addWidget(file_widget)
         self.load_stack.addWidget(gen_widget)
 
+        # 变换/补偿/运行
+        trans_layout = QtWidgets.QHBoxLayout()
+        trans_layout.addWidget(self.flip_h_checkbox)
+        trans_layout.addWidget(self.flip_v_checkbox)
+        trans_layout.addWidget(self.slm1_comp_checkbox)
+        trans_layout.addWidget(self.slm1_comp_edit, 1)
+        trans_layout.addWidget(self.slm1_comp_button)
+
+        play_ctrl = QtWidgets.QHBoxLayout()
+        play_ctrl.addWidget(self.prev_button)
+        play_ctrl.addWidget(self.next_button)
+        play_ctrl.addWidget(self.loop_checkbox)
+        play_ctrl.addWidget(self.single_button)
+        play_ctrl.addWidget(self.play_button)
+        play_ctrl.addWidget(self.stop_play_button)
+
+        main_layout = QtWidgets.QVBoxLayout()
+        main_layout.addWidget(QtWidgets.QLabel("SLM1 模式"))
+        main_layout.addWidget(self.device_combo)
+        main_layout.addWidget(QtWidgets.QLabel("加载源"))
+        load_source = QtWidgets.QHBoxLayout()
+        load_source.addWidget(self.load_mode_combo)
+        load_source.addWidget(self.auto_apply_checkbox)
+        main_layout.addLayout(load_source)
+        main_layout.addWidget(self.load_stack)
+        main_layout.addLayout(play_ctrl)
+        main_layout.addLayout(trans_layout)
+
         run_layout = QtWidgets.QHBoxLayout()
         run_layout.addWidget(self.run_button)
         run_layout.addWidget(self.stop_button)
+        main_layout.addLayout(run_layout)
 
-        play_layout = QtWidgets.QGridLayout()
-        play_layout.addWidget(QtWidgets.QLabel("播放模式"), 0, 0)
-        play_layout.addWidget(self.play_mode_combo, 0, 1)
-        play_layout.addWidget(QtWidgets.QLabel("播放间隔"), 1, 0)
-        play_layout.addWidget(self.interval_spin, 1, 1)
-        play_layout.addWidget(self.single_button, 2, 0)
-        play_layout.addWidget(self.play_button, 2, 1)
-        play_layout.addWidget(self.stop_play_button, 3, 1)
+        self.setLayout(main_layout)
 
-        comp_layout = QtWidgets.QHBoxLayout()
-        comp_layout.addWidget(self.slm1_comp_checkbox)
-        comp_layout.addWidget(self.slm1_comp_edit, 1)
-        comp_layout.addWidget(self.slm1_comp_button)
-        comp_layout.addWidget(self.auto_apply_checkbox)
-
-        layout = QtWidgets.QVBoxLayout()
-        layout.addWidget(QtWidgets.QLabel("加载模式"))
-        layout.addWidget(self.load_mode_combo)
-        layout.addWidget(self.load_stack)
-        layout.addLayout(play_layout)
-        layout.addWidget(QtWidgets.QLabel("SLM1 类型"))
-        layout.addWidget(self.device_combo)
-        layout.addLayout(comp_layout)
-        layout.addLayout(run_layout)
-        self.setLayout(layout)
-
+        # 连接信号
         self.image_button.clicked.connect(self._pick_image)
         self.folder_button.clicked.connect(self._pick_folder)
         self.slm1_comp_button.clicked.connect(self._pick_slm1_comp)
         self.load_mode_combo.currentIndexChanged.connect(self._update_load_mode)
         self.play_mode_combo.currentIndexChanged.connect(self._update_play_mode)
         self.field_mode_combo.currentIndexChanged.connect(self._update_field_mode)
+
+        # 将所有可能影响画面的参数变化都连接到 param_changed 信号
+        self._connect_auto_apply_signals()
+
         self._update_load_mode()
         self._update_play_mode()
         self._update_field_mode()
 
+    def _connect_auto_apply_signals(self):
+        # 输入源变化
+        self.load_mode_combo.currentIndexChanged.connect(self.param_changed)
+        self.input_type_combo.currentIndexChanged.connect(self.param_changed)
+        self.image_edit.textChanged.connect(self.param_changed)
+        self.field_mode_combo.currentIndexChanged.connect(self.param_changed)
+
+        # 参数变化
+        self.lg_w0_spin.valueChanged.connect(self.param_changed)
+        self.lg_p_spin.valueChanged.connect(self.param_changed)
+        self.lg_l_spin.valueChanged.connect(self.param_changed)
+        self.letter_edit.textChanged.connect(self.param_changed)
+        self.dataset_index_spin.valueChanged.connect(self.param_changed)
+        self.field_width_spin.valueChanged.connect(self.param_changed)
+        self.field_height_spin.valueChanged.connect(self.param_changed)
+
+        # 翻转和补偿
+        self.flip_h_checkbox.stateChanged.connect(self.param_changed)
+        self.flip_v_checkbox.stateChanged.connect(self.param_changed)
+        self.slm1_comp_checkbox.stateChanged.connect(self.param_changed)
+        self.slm1_comp_edit.textChanged.connect(self.param_changed)
+
     def _pick_image(self) -> None:
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self,
-            "选择输入图像",
-            "",
-            "Images (*.png *.bmp *.jpg *.jpeg *.tif *.tiff)",
-        )
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "选择图像", "", "Images (*.png *.bmp *.jpg *.tif)")
         if path:
             self.image_edit.setText(path)
 
     def _pick_folder(self) -> None:
-        path = QtWidgets.QFileDialog.getExistingDirectory(self, "选择图片文件夹")
+        path = QtWidgets.QFileDialog.getExistingDirectory(self, "选择文件夹")
         if path:
             self.folder_edit.setText(path)
 
     def _pick_slm1_comp(self) -> None:
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self,
-            "选择 SLM1 补偿文件",
-            "",
-            "Images (*.png *.bmp *.tif *.tiff)",
-        )
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "补偿文件", "", "Images (*.png *.bmp *.tif)")
         if path:
             self.slm1_comp_edit.setText(path)
 
@@ -463,16 +502,16 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
     def _update_field_mode(self) -> None:
         mode = self.field_mode_combo.currentData() or "lg"
         if mode == "lg":
-            index = 0
+            index = 0;
             enable_size = False
         elif mode == "letter":
-            index = 1
+            index = 1;
             enable_size = True
         elif mode in {"mnist", "fashion_mnist"}:
-            index = 2
+            index = 2;
             enable_size = True
         else:
-            index = 0
+            index = 0;
             enable_size = False
         self.field_stack.setCurrentIndex(index)
         self.field_width_spin.setEnabled(enable_size)
@@ -492,14 +531,23 @@ class SLM2Panel(QtWidgets.QGroupBox):
         self.run_button = QtWidgets.QPushButton("Run SLM2")
         self.stop_button = QtWidgets.QPushButton("Stop SLM2")
 
-        self.slm2_comp_checkbox = QtWidgets.QCheckBox("叠加 SLM2 补偿")
+        self.slm2_comp_checkbox = QtWidgets.QCheckBox("叠加补偿")
         self.slm2_comp_edit = QtWidgets.QLineEdit()
-        self.slm2_comp_button = QtWidgets.QPushButton("选择补偿文件")
+        self.slm2_comp_button = QtWidgets.QPushButton("...")
+
+        # SLM2 全局翻转
+        self.global_flip_h = QtWidgets.QCheckBox("全局H翻转")
+        self.global_flip_v = QtWidgets.QCheckBox("全局V翻转")
 
         comp_layout = QtWidgets.QHBoxLayout()
         comp_layout.addWidget(self.slm2_comp_checkbox)
         comp_layout.addWidget(self.slm2_comp_edit, 1)
         comp_layout.addWidget(self.slm2_comp_button)
+
+        global_flip_layout = QtWidgets.QHBoxLayout()
+        global_flip_layout.addWidget(self.global_flip_h)
+        global_flip_layout.addWidget(self.global_flip_v)
+        global_flip_layout.addStretch(1)
 
         layout = QtWidgets.QVBoxLayout()
         layout.addWidget(QtWidgets.QLabel("SLM2 类型"))
@@ -507,6 +555,7 @@ class SLM2Panel(QtWidgets.QGroupBox):
         for widget in self.layer_widgets:
             layout.addWidget(widget)
         layout.addLayout(comp_layout)
+        layout.addLayout(global_flip_layout)
         layout.addWidget(self.auto_apply_checkbox)
         layout.addWidget(self.apply_button)
         run_layout = QtWidgets.QHBoxLayout()
@@ -517,13 +566,10 @@ class SLM2Panel(QtWidgets.QGroupBox):
 
         self.slm2_comp_button.clicked.connect(self._pick_slm2_comp)
 
+        # 也要让全局翻转触发 auto apply (在主程序连接)
+
     def _pick_slm2_comp(self) -> None:
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(
-            self,
-            "选择 SLM2 补偿文件",
-            "",
-            "Images (*.png *.bmp *.tif *.tiff)",
-        )
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "补偿文件", "", "Images (*.png *.bmp *.tif)")
         if path:
             self.slm2_comp_edit.setText(path)
 
@@ -534,41 +580,43 @@ class SLM2Panel(QtWidgets.QGroupBox):
 class CameraControlPanel(QtWidgets.QGroupBox):
     def __init__(self, parent=None):
         super().__init__("相机控制", parent)
-        self.run_button = QtWidgets.QPushButton("Run 相机")
-        self.stop_button = QtWidgets.QPushButton("Stop 相机")
+        self.run_button = QtWidgets.QPushButton("Run")
+        self.stop_button = QtWidgets.QPushButton("Stop")
         self.exposure_spin = QtWidgets.QDoubleSpinBox()
         self.exposure_spin.setRange(10.0, 200000.0)
         self.exposure_spin.setValue(20000.0)
-        self.exposure_spin.setSuffix(" us")
-        self.apply_exposure_button = QtWidgets.QPushButton("应用曝光")
+        self.apply_exposure_button = QtWidgets.QPushButton("Set")
 
-        self.save_roi_checkbox = QtWidgets.QCheckBox("保存 ROI")
+        self.save_roi_checkbox = QtWidgets.QCheckBox("仅保存ROI")
         self.record_interval_spin = QtWidgets.QSpinBox()
         self.record_interval_spin.setRange(10, 5000)
         self.record_interval_spin.setValue(200)
         self.record_interval_spin.setSuffix(" ms")
 
-        self.auto_reduce_checkbox = QtWidgets.QCheckBox("过曝自动降低曝光并丢弃")
-        self.auto_reduce_checkbox.setChecked(False)
+        self.auto_reduce_checkbox = QtWidgets.QCheckBox("过曝自动降曝光")
+
+        # 相机翻转
+        self.flip_h = QtWidgets.QCheckBox("H翻转")
+        self.flip_v = QtWidgets.QCheckBox("V翻转")
 
         run_layout = QtWidgets.QHBoxLayout()
         run_layout.addWidget(self.run_button)
         run_layout.addWidget(self.stop_button)
 
         exposure_layout = QtWidgets.QHBoxLayout()
-        exposure_layout.addWidget(QtWidgets.QLabel("曝光时间"))
+        exposure_layout.addWidget(QtWidgets.QLabel("Exp(us)"))
         exposure_layout.addWidget(self.exposure_spin, 1)
         exposure_layout.addWidget(self.apply_exposure_button)
 
-        record_layout = QtWidgets.QHBoxLayout()
-        record_layout.addWidget(QtWidgets.QLabel("连续存图间隔"))
-        record_layout.addWidget(self.record_interval_spin)
+        flip_layout = QtWidgets.QHBoxLayout()
+        flip_layout.addWidget(self.flip_h)
+        flip_layout.addWidget(self.flip_v)
 
         layout = QtWidgets.QVBoxLayout()
         layout.addLayout(run_layout)
         layout.addLayout(exposure_layout)
+        layout.addLayout(flip_layout)
         layout.addWidget(self.save_roi_checkbox)
-        layout.addLayout(record_layout)
         layout.addWidget(self.auto_reduce_checkbox)
         self.setLayout(layout)
 
