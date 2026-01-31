@@ -536,8 +536,6 @@ class MainWindow(QtWidgets.QMainWindow):
                     return
             else:
                 self.image_index += 1
-        # 如果是自动生成模式，可能需要根据逻辑更新参数（这里暂时只是刷新）
-        # 如果需要自动更新生成参数，可以在这里添加逻辑
 
         self.show_current_image()
 
@@ -831,6 +829,11 @@ class MainWindow(QtWidgets.QMainWindow):
         y0, y1 = sorted([p1.y(), p2.y()])
         if x1 - x0 <= 1 or y1 - y0 <= 1:
             return
+
+        # 修复：确保 ROI 是可见的
+        if not self.roi.isVisible():
+            self.roi.setVisible(True)
+
         self.roi.setPos((x0, y0))
         self.roi.setSize((x1 - x0, y1 - y0))
         if hasattr(self.roi, "setSelected"):
