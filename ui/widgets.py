@@ -328,6 +328,8 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.slm1_comp_checkbox = QtWidgets.QCheckBox("叠加 SLM1 补偿")
         self.slm1_comp_edit = QtWidgets.QLineEdit()
         self.slm1_comp_button = QtWidgets.QPushButton("选择补偿文件")
+        self.auto_apply_checkbox = QtWidgets.QCheckBox("Auto Apply")
+        self.auto_apply_checkbox.setChecked(False)
 
         file_layout = QtWidgets.QGridLayout()
         file_layout.addWidget(QtWidgets.QLabel("输入类型"), 0, 0)
@@ -399,6 +401,7 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         comp_layout.addWidget(self.slm1_comp_checkbox)
         comp_layout.addWidget(self.slm1_comp_edit, 1)
         comp_layout.addWidget(self.slm1_comp_button)
+        comp_layout.addWidget(self.auto_apply_checkbox)
 
         layout = QtWidgets.QVBoxLayout()
         layout.addWidget(QtWidgets.QLabel("加载模式"))

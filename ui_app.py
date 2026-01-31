@@ -121,6 +121,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.image_panel.next_button.clicked.connect(self.show_next_image)
         self.image_panel.run_button.clicked.connect(self.start_slm1)
         self.image_panel.stop_button.clicked.connect(self.stop_slm1)
+        self.image_panel.auto_apply_checkbox.stateChanged.connect(self.on_slm1_auto_apply_change)
+        self.image_panel.slm1_comp_checkbox.stateChanged.connect(self.on_slm1_auto_apply_change)
+        self.image_panel.slm1_comp_edit.textChanged.connect(self.on_slm1_auto_apply_change)
 
         for widget in self.slm2_panel.layer_widgets:
             widget.file_changed.connect(self.on_layer_change)
@@ -131,6 +134,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.preview_panel.display_mode_changed.connect(lambda _: self.update_preview())
         self.slm2_panel.run_button.clicked.connect(self.start_slm2)
         self.slm2_panel.stop_button.clicked.connect(self.stop_slm2)
+        self.slm2_panel.slm2_comp_checkbox.stateChanged.connect(self.on_layer_change)
+        self.slm2_panel.slm2_comp_edit.textChanged.connect(self.on_layer_change)
 
         self.run_button.clicked.connect(self.run_all)
         self.stop_button.clicked.connect(self.stop_all)
@@ -216,6 +221,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.roi.addScaleHandle([0, 1], [1, 0])
         self.roi.addScaleHandle([1, 1], [0, 0])
         self.roi.addTranslateHandle([0.5, 0.5])
+        self.roi.setSelectable(True)
         self.roi.setVisible(False)
         self.view_box.addItem(self.roi)
         self.roi.sigRegionChanged.connect(self.update_roi_stats)
@@ -557,6 +563,10 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self.update_preview()
 
+    def on_slm1_auto_apply_change(self, *_args) -> None:
+        if self.image_panel.auto_apply_checkbox.isChecked():
+            self.generate_hologram()
+
     def apply_slm2(self) -> None:
         try:
             phase = self.build_slm2_phase()
@@ -769,6 +779,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.roi.setSize((x1 - x0, y1 - y0))
         if finished:
             self.on_roi_changed()
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        if self.roi.isVisible() and self.roi.isSelected():
+            if event.key() in (QtCore.Qt.Key.Key_Escape, QtCore.Qt.Key.Key_Delete, QtCore.Qt.Key.Key_Backspace):
+                self.roi.setSelected(False)
+                self.roi.setVisible(False)
+                return
+        super().keyPressEvent(event)
 
     def _crop_to_roi(self, img: np.ndarray) -> np.ndarray:
         roi_bounds = self.roi.parentBounds()
