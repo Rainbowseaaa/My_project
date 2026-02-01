@@ -311,6 +311,15 @@ class MainWindow(QtWidgets.QMainWindow):
     def start_slm2(self) -> None:
         if self.slm2_thread.isRunning():
             return
+        if self.slm1_controller is not None:
+            slm1_type = self.image_panel.device_combo.currentData() or self.config.get("slm1", {}).get("device_type",
+                                                                                                       "upo")
+            slm2_type = self.slm2_panel.device_combo.currentData() or self.config.get("slm2", {}).get("device_type",
+                                                                                                      "holoeye")
+            if slm1_type == "upo" and slm2_type == "upo":
+                if self.image_panel.selected_screen_num() == self.slm2_panel.selected_screen_num():
+                    self.log("SLM2 与 SLM1 使用同一屏幕ID，可能导致覆盖，请选择不同屏幕")
+                    return
         try:
             self.slm2_controller = self._create_slm_controller("slm2")
             slm2_shape = (self.slm2_controller.height, self.slm2_controller.width)
@@ -806,8 +815,6 @@ class MainWindow(QtWidgets.QMainWindow):
             rect = QtCore.QRectF(0, 0, frame.shape[1], frame.shape[0])
             self.image_item.setRect(rect)
             self.view_box.setRange(rect, padding=0.02)
-            self.view_box.setLimits(xMin=0, xMax=frame.shape[1], yMin=0, yMax=frame.shape[0])
-            self.plot_widget.setFixedSize(frame.shape[1], frame.shape[0])
             self._camera_view_mode = "full"
         if self._camera_view_mode == "full":
             self.view_box.setAspectLocked(True, ratio=frame.shape[1] / frame.shape[0])
