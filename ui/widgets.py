@@ -316,6 +316,11 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.device_combo = QtWidgets.QComboBox()
         self.device_combo.addItem("UPO (1920x1200)", userData="upo")
         self.device_combo.addItem("Holoeye (1920x1080)", userData="holoeye")
+        self.screen_combo = QtWidgets.QComboBox()
+        self._populate_screen_combo(self.screen_combo)
+        self.heds_selector_combo = QtWidgets.QComboBox()
+        self.heds_refresh_button = QtWidgets.QToolButton()
+        self.heds_refresh_button.setText("刷新")
 
         # --- 2. 加载模式 (顶层) ---
         self.load_mode_combo = QtWidgets.QComboBox()
@@ -369,9 +374,9 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.lg_w0_spin.setRange(1.0, 1000.0)
         self.lg_w0_spin.setValue(80.0)
         self.lg_p_spin = QtWidgets.QSpinBox()
-        self.lg_p_spin.setRange(0, 10)
+        self.lg_p_spin.setRange(0, 200)
         self.lg_l_spin = QtWidgets.QSpinBox()
-        self.lg_l_spin.setRange(-10, 10)
+        self.lg_l_spin.setRange(-200, 200)
         self.letter_edit = QtWidgets.QLineEdit("A")
         self.dataset_index_spin = QtWidgets.QSpinBox()
         self.dataset_index_spin.setRange(0, 9999)
@@ -494,6 +499,16 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         main_layout = QtWidgets.QVBoxLayout()
         main_layout.addWidget(QtWidgets.QLabel("SLM1 类型"))
         main_layout.addWidget(self.device_combo)
+        screen_layout = QtWidgets.QHBoxLayout()
+        screen_layout.addWidget(QtWidgets.QLabel("屏幕ID"))
+        screen_layout.addWidget(self.screen_combo, 1)
+        main_layout.addLayout(screen_layout)
+
+        heds_layout = QtWidgets.QHBoxLayout()
+        heds_layout.addWidget(QtWidgets.QLabel("Holoeye 设备"))
+        heds_layout.addWidget(self.heds_selector_combo, 1)
+        heds_layout.addWidget(self.heds_refresh_button)
+        main_layout.addLayout(heds_layout)
 
         source_header = QtWidgets.QHBoxLayout()
         source_header.addWidget(QtWidgets.QLabel("加载设置"))
@@ -525,6 +540,7 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.play_mode_combo.currentIndexChanged.connect(self._update_play_mode)
         self.field_mode_combo.currentIndexChanged.connect(self._update_field_mode)
         self.file_source_type_combo.currentIndexChanged.connect(self._update_file_source_ui)
+        self.device_combo.currentIndexChanged.connect(self._update_device_ui)
 
         self._connect_auto_apply_signals()
 
@@ -532,6 +548,36 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self._update_play_mode()
         self._update_field_mode()
         self._update_file_source_ui()
+        self._update_device_ui()
+
+    def _populate_screen_combo(self, combo: QtWidgets.QComboBox) -> None:
+        combo.clear()
+        screens = QtGui.QGuiApplication.screens()
+        count = max(len(screens), 3)
+        for idx in range(1, count + 1):
+            combo.addItem(str(idx), userData=idx)
+
+    def _update_device_ui(self) -> None:
+        is_upo = (self.device_combo.currentData() == "upo")
+        self.screen_combo.setEnabled(is_upo)
+        self.heds_selector_combo.setEnabled(not is_upo)
+        self.heds_refresh_button.setEnabled(not is_upo)
+
+    def selected_screen_num(self) -> int:
+        data = self.screen_combo.currentData()
+        return int(data) if data is not None else 1
+
+    def set_heds_options(self, items: list[str]) -> None:
+        self.heds_selector_combo.clear()
+        if not items:
+            self.heds_selector_combo.addItem("auto")
+            return
+        for item in items:
+            self.heds_selector_combo.addItem(item)
+
+    def heds_selector(self) -> str:
+        data = self.heds_selector_combo.currentText().strip()
+        return "" if data == "auto" else data
 
     def _connect_auto_apply_signals(self):
         self.load_mode_combo.currentIndexChanged.connect(self.param_changed)
@@ -613,6 +659,11 @@ class SLM2Panel(QtWidgets.QGroupBox):
         self.device_combo = QtWidgets.QComboBox()
         self.device_combo.addItem("Holoeye (1920x1080)", userData="holoeye")
         self.device_combo.addItem("UPO (1920x1200)", userData="upo")
+        self.screen_combo = QtWidgets.QComboBox()
+        self._populate_screen_combo(self.screen_combo)
+        self.heds_selector_combo = QtWidgets.QComboBox()
+        self.heds_refresh_button = QtWidgets.QToolButton()
+        self.heds_refresh_button.setText("刷新")
         self.layer_widgets: List[LayerWidget] = [LayerWidget(i) for i in range(4)]
         self.apply_button = QtWidgets.QPushButton("合成并加载 SLM2")
         self.auto_apply_checkbox = QtWidgets.QCheckBox("Auto Apply")
@@ -640,6 +691,16 @@ class SLM2Panel(QtWidgets.QGroupBox):
         layout = QtWidgets.QVBoxLayout()
         layout.addWidget(QtWidgets.QLabel("SLM2 类型"))
         layout.addWidget(self.device_combo)
+        screen_layout = QtWidgets.QHBoxLayout()
+        screen_layout.addWidget(QtWidgets.QLabel("屏幕ID"))
+        screen_layout.addWidget(self.screen_combo, 1)
+        layout.addLayout(screen_layout)
+
+        heds_layout = QtWidgets.QHBoxLayout()
+        heds_layout.addWidget(QtWidgets.QLabel("Holoeye 设备"))
+        heds_layout.addWidget(self.heds_selector_combo, 1)
+        heds_layout.addWidget(self.heds_refresh_button)
+        layout.addLayout(heds_layout)
         for widget in self.layer_widgets:
             layout.addWidget(widget)
         layout.addLayout(comp_layout)
@@ -656,11 +717,42 @@ class SLM2Panel(QtWidgets.QGroupBox):
         self.setLayout(layout)
 
         self.slm2_comp_button.clicked.connect(self._pick_slm2_comp)
+        self.device_combo.currentIndexChanged.connect(self._update_device_ui)
+        self._update_device_ui()
 
     def _pick_slm2_comp(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "补偿文件", "", "Images (*.png *.bmp *.tif)")
         if path:
             self.slm2_comp_edit.setText(path)
+
+    def _populate_screen_combo(self, combo: QtWidgets.QComboBox) -> None:
+        combo.clear()
+        screens = QtGui.QGuiApplication.screens()
+        count = max(len(screens), 3)
+        for idx in range(1, count + 1):
+            combo.addItem(str(idx), userData=idx)
+
+    def _update_device_ui(self) -> None:
+        is_upo = (self.device_combo.currentData() == "upo")
+        self.screen_combo.setEnabled(is_upo)
+        self.heds_selector_combo.setEnabled(not is_upo)
+        self.heds_refresh_button.setEnabled(not is_upo)
+
+    def selected_screen_num(self) -> int:
+        data = self.screen_combo.currentData()
+        return int(data) if data is not None else 1
+
+    def set_heds_options(self, items: list[str]) -> None:
+        self.heds_selector_combo.clear()
+        if not items:
+            self.heds_selector_combo.addItem("auto")
+            return
+        for item in items:
+            self.heds_selector_combo.addItem(item)
+
+    def heds_selector(self) -> str:
+        data = self.heds_selector_combo.currentText().strip()
+        return "" if data == "auto" else data
 
     def get_layers(self) -> List[LayerConfig]:
         return [widget.get_config() for widget in self.layer_widgets]
@@ -675,6 +767,7 @@ class CameraControlPanel(QtWidgets.QGroupBox):
         self.exposure_spin.setRange(10.0, 200000.0)
         self.exposure_spin.setValue(20000.0)
         self.apply_exposure_button = QtWidgets.QPushButton("Set")
+        self.auto_exposure_checkbox = QtWidgets.QCheckBox("自动曝光")
 
         self.save_roi_checkbox = QtWidgets.QCheckBox("仅保存ROI")
         self.record_interval_spin = QtWidgets.QSpinBox()
@@ -702,6 +795,7 @@ class CameraControlPanel(QtWidgets.QGroupBox):
 
         layout = QtWidgets.QVBoxLayout()
         layout.addLayout(run_layout)
+        layout.addWidget(self.auto_exposure_checkbox)
         layout.addLayout(exposure_layout)
         layout.addLayout(flip_layout)
         layout.addWidget(self.save_roi_checkbox)

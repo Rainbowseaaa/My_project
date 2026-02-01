@@ -71,6 +71,14 @@ class CameraWorker(QtCore.QObject):
             except Exception as exc:
                 self.error.emit(str(exc))
 
+    @QtCore.pyqtSlot(bool)
+    def set_auto_exposure(self, enabled: bool) -> None:
+        if hasattr(self._camera, "set_auto_exposure"):
+            try:
+                self._camera.set_auto_exposure(bool(enabled))
+            except Exception as exc:
+                self.error.emit(str(exc))
+
 
 # [ui/workers.py]
 # 重点修改 SLM1Worker，其他类如 CameraWorker 无需大改

@@ -9,6 +9,8 @@ import pyqtgraph as pg
 from PIL import Image
 from PyQt6 import QtCore, QtGui, QtWidgets
 
+pg.setConfigOptions(imageAxisOrder="row-major")
+
 from calibrate_insitu import CameraGX, MockCamera, MockSLM2, SLM1Controller, SLM2Controller
 from ui.phase_utils import apply_compensation, compose_layers, load_compensation, load_phase_file, make_preview_image
 from ui.widgets import (
@@ -88,6 +90,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._latest_slm2_loaded_phase: Optional[np.ndarray] = None
         self._latest_slm2_returned_phase: Optional[np.ndarray] = None
         self._latest_slm1_image: Optional[np.ndarray] = None
+        self._camera_frame_shape: Optional[tuple[int, int]] = None
+        self._camera_view_mode = "full"
+        self._heds_inited = False
 
         self._setup_ui()
         self._setup_threads()
@@ -155,6 +160,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.camera_control.run_button.clicked.connect(self.start_camera)
         self.camera_control.stop_button.clicked.connect(self.stop_camera)
         self.camera_control.apply_exposure_button.clicked.connect(self.apply_exposure)
+        self.camera_control.auto_exposure_checkbox.stateChanged.connect(self.on_auto_exposure_change)
+        self.image_panel.heds_refresh_button.clicked.connect(self._refresh_heds_devices)
+        self.slm2_panel.heds_refresh_button.clicked.connect(self._refresh_heds_devices)
 
         # 布局
         left_layout = QtWidgets.QVBoxLayout()
@@ -191,6 +199,7 @@ class MainWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(group)
 
         self.plot_widget = pg.GraphicsLayoutWidget()
+        self.plot_widget.setMinimumSize(320, 200)
         self.camera_toolbar = QtWidgets.QHBoxLayout()
         self.camera_toolbar.setContentsMargins(0, 0, 0, 0)
         self.camera_mode_button = QtWidgets.QToolButton()
@@ -224,7 +233,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.view_box.set_mode("pan")
         self.image_item = pg.ImageItem()
         self.view_box.addItem(self.image_item)
-        self.view_box.setBackgroundColor("k")
+        self.view_box.setBackgroundColor("w")
 
         self.roi = pg.RectROI([50, 50], [100, 100], pen=pg.mkPen("y", width=2))
         self.roi.addScaleHandle([0, 0], [1, 1])
@@ -418,8 +427,27 @@ class MainWindow(QtWidgets.QMainWindow):
 
         exposure_us = float(self.config.get("camera", {}).get("exposure_us", 20000))
         self.camera_control.exposure_spin.setValue(exposure_us)
+        auto_exposure = bool(self.config.get("camera", {}).get("auto_exposure", False))
+        self.camera_control.auto_exposure_checkbox.setChecked(auto_exposure)
+        self._sync_auto_exposure_ui()
         record_interval = int(self.config.get("camera", {}).get("record_interval_ms", 200))
         self.camera_control.record_interval_spin.setValue(record_interval)
+
+        slm1_screen = int(self.config.get("slm1", {}).get("screen_num", 1))
+        slm1_screen_index = self.image_panel.screen_combo.findData(slm1_screen)
+        if slm1_screen_index >= 0:
+            self.image_panel.screen_combo.setCurrentIndex(slm1_screen_index)
+        slm2_screen = int(self.config.get("slm2", {}).get("screen_num", 1))
+        slm2_screen_index = self.slm2_panel.screen_combo.findData(slm2_screen)
+        if slm2_screen_index >= 0:
+            self.slm2_panel.screen_combo.setCurrentIndex(slm2_screen_index)
+
+        slm1_selector = str(self.config.get("slm1", {}).get("heds_selector", "")).strip()
+        slm2_selector = str(self.config.get("slm2", {}).get("heds_selector", "")).strip()
+        if slm1_selector:
+            self.image_panel.set_heds_options([slm1_selector])
+        if slm2_selector:
+            self.slm2_panel.set_heds_options([slm2_selector])
 
     def log(self, message: str) -> None:
         self.log_panel.append(message)
@@ -443,7 +471,10 @@ class MainWindow(QtWidgets.QMainWindow):
             cfg = dict(self.config.get("slm1", {}))
             if device_type == "holoeye" and not cfg.get("sdk_path"):
                 cfg["sdk_path"] = self.config.get("slm2", {}).get("sdk_path", "")
+            if device_type == "holoeye":
+                cfg["heds_selector"] = self.image_panel.heds_selector()
             if device_type == "upo":
+                cfg["screen_num"] = self.image_panel.selected_screen_num()
                 return MockSLM1(self._slm_shape_for_type(device_type)) if self.mock else SLM1Controller(cfg, slm1_dir)
             return MockSLM2({"slm2_size": self._slm_shape_for_type(device_type)}) if self.mock else SLM2Controller(cfg,
                                                                                                                    slm1_dir)
@@ -452,9 +483,9 @@ class MainWindow(QtWidgets.QMainWindow):
                                                                                                     "holoeye")
         cfg = dict(self.config.get("slm2", {}))
         if device_type == "upo":
-            if "screen_num" not in cfg:
-                cfg["screen_num"] = self.config.get("slm1", {}).get("screen_num", 1)
+            cfg["screen_num"] = self.slm2_panel.selected_screen_num()
             return MockSLM1(self._slm_shape_for_type(device_type)) if self.mock else SLM1Controller(cfg, slm2_dir)
+        cfg["heds_selector"] = self.slm2_panel.heds_selector()
         return MockSLM2({"slm2_size": self._slm_shape_for_type(device_type)}) if self.mock else SLM2Controller(cfg,
                                                                                                                slm2_dir)
 
@@ -768,8 +799,18 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.camera_control.flip_v.isChecked():
             frame = np.flipud(frame)
 
-        self.image_item.setImage(frame, autoLevels=True)
-        self.view_box.setAspectLocked(True, ratio=frame.shape[1] / frame.shape[0])
+        self.image_item.setImage(frame, autoLevels=True, autoDownsample=False)
+        frame_shape = (int(frame.shape[0]), int(frame.shape[1]))
+        if self._camera_frame_shape != frame_shape:
+            self._camera_frame_shape = frame_shape
+            rect = QtCore.QRectF(0, 0, frame.shape[1], frame.shape[0])
+            self.image_item.setRect(rect)
+            self.view_box.setRange(rect, padding=0.02)
+            self.view_box.setLimits(xMin=0, xMax=frame.shape[1], yMin=0, yMax=frame.shape[0])
+            self.plot_widget.setFixedSize(frame.shape[1], frame.shape[0])
+            self._camera_view_mode = "full"
+        if self._camera_view_mode == "full":
+            self.view_box.setAspectLocked(True, ratio=frame.shape[1] / frame.shape[0])
         self.status_panel.update_status(fps=fps)
         self._check_overexposure(frame)
         if self.recording and self.record_dir:
@@ -824,6 +865,8 @@ class MainWindow(QtWidgets.QMainWindow):
         img = self.image_item.image
         rect = QtCore.QRectF(0, 0, img.shape[1], img.shape[0])
         self.view_box.setRange(rect, padding=0.05)
+        self.view_box.setAspectLocked(True, ratio=img.shape[1] / img.shape[0])
+        self._camera_view_mode = "full"
 
     def zoom_to_roi(self) -> None:
         if self.image_item.image is None:
@@ -832,6 +875,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if roi_bounds.width() <= 1 or roi_bounds.height() <= 1:
             return
         self.view_box.setRange(roi_bounds, padding=0.05)
+        self.view_box.setAspectLocked(True, ratio=roi_bounds.width() / roi_bounds.height())
+        self._camera_view_mode = "roi"
 
     def on_camera_mode_changed(self) -> None:
         mode = "select" if self.camera_mode_button.isChecked() else "pan"
@@ -901,7 +946,7 @@ class MainWindow(QtWidgets.QMainWindow):
         over = np.mean(frame >= threshold)
         self.overexposed = over >= ratio
         self.status_panel.update_status(overexposure=f"{over:.2%}" if self.overexposed else "正常")
-        if self.overexposed and self.camera_control.auto_reduce_checkbox.isChecked():
+        if self.overexposed and self.camera_control.auto_reduce_checkbox.isChecked() and not self.camera_control.auto_exposure_checkbox.isChecked():
             new_exposure = max(100.0, self.camera_control.exposure_spin.value() * 0.8)
             self.camera_control.exposure_spin.setValue(new_exposure)
             self.apply_exposure()
@@ -966,9 +1011,28 @@ class MainWindow(QtWidgets.QMainWindow):
     def on_camera_error(self, message: str) -> None:
         self.log(f"相机错误: {message}")
 
+    def _sync_auto_exposure_ui(self) -> None:
+        is_auto = self.camera_control.auto_exposure_checkbox.isChecked()
+        self.camera_control.exposure_spin.setEnabled(not is_auto)
+        self.camera_control.apply_exposure_button.setEnabled(not is_auto)
+
+    def on_auto_exposure_change(self, *_args) -> None:
+        self._sync_auto_exposure_ui()
+        self.apply_exposure()
+
     def apply_exposure(self) -> None:
         if self.camera_worker is None:
             self.log("相机未初始化，无法设置曝光")
+            return
+        auto_exposure = self.camera_control.auto_exposure_checkbox.isChecked()
+        QtCore.QMetaObject.invokeMethod(
+            self.camera_worker,
+            "set_auto_exposure",
+            QtCore.Qt.ConnectionType.QueuedConnection,
+            QtCore.Q_ARG(bool, auto_exposure),
+        )
+        if auto_exposure:
+            self.log("设置自动曝光: ON")
             return
         exposure_us = self.camera_control.exposure_spin.value()
         QtCore.QMetaObject.invokeMethod(
@@ -978,6 +1042,50 @@ class MainWindow(QtWidgets.QMainWindow):
             QtCore.Q_ARG(float, exposure_us),
         )
         self.log(f"设置曝光: {exposure_us:.0f} us")
+
+    def _refresh_heds_devices(self) -> None:
+        devices = self._detect_holoeye_devices()
+        self.image_panel.set_heds_options(devices)
+        self.slm2_panel.set_heds_options(devices)
+        slm1_selector = str(self.config.get("slm1", {}).get("heds_selector", "")).strip()
+        slm2_selector = str(self.config.get("slm2", {}).get("heds_selector", "")).strip()
+        if slm1_selector:
+            idx = self.image_panel.heds_selector_combo.findText(slm1_selector)
+            if idx >= 0:
+                self.image_panel.heds_selector_combo.setCurrentIndex(idx)
+        if slm2_selector:
+            idx = self.slm2_panel.heds_selector_combo.findText(slm2_selector)
+            if idx >= 0:
+                self.slm2_panel.heds_selector_combo.setCurrentIndex(idx)
+
+    def _detect_holoeye_devices(self) -> list[str]:
+        try:
+            from calibrate_insitu import import_heds
+
+            cfg = dict(self.config.get("slm2", {}))
+            if not cfg.get("sdk_path"):
+                cfg["sdk_path"] = self.config.get("slm1", {}).get("sdk_path", "")
+            heds = import_heds(cfg)
+            if not self._heds_inited:
+                err = heds.SDK.Init(4, 1)
+                if err != heds.HEDSERR_NoError:
+                    return []
+                self._heds_inited = True
+        except Exception:
+            return []
+
+        found: list[str] = []
+        for idx in range(0, 6):
+            try:
+                slm = heds.SLM.Init(f"-slm index:{idx} -nogui", False, 0.0)
+                if slm.errorCode() == heds.HEDSERR_NoError:
+                    found.append(f"index:{idx}")
+                if hasattr(slm, "_Wnd") and slm._Wnd is not None:
+                    slm._Wnd.close()
+            except Exception:
+                continue
+
+        return found
 
 
 def main() -> None:

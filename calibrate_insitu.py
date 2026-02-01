@@ -16,6 +16,8 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from PIL import Image
 
+_HEDS_INITED = False
+
 
 @dataclass
 class ROI:
@@ -301,6 +303,7 @@ class CameraGX(CameraBase):
             if dev_num == 0:
                 raise RuntimeError("未检测到相机设备")
             self.cam = self.device_manager.open_device_by_index(1)
+        self._auto_exposure = bool(config.get("auto_exposure", False))
         self._setup_camera(config)
         self.cam.stream_on()
         self.avg_frames = int(config.get("avg_frames", 1))
@@ -308,10 +311,12 @@ class CameraGX(CameraBase):
 
     def _setup_camera(self, config: Dict) -> None:
         remote = self.cam
-        if remote.get_remote_device_feature_control().is_implemented("ExposureTime"):
-            exposure = float(config.get("exposure_us", 20000))
-            remote.get_remote_device_feature_control().get_float_feature("ExposureTime").set(exposure)
-            self._exposure_us = exposure
+        self.set_auto_exposure(self._auto_exposure)
+        if not self._auto_exposure:
+            if remote.get_remote_device_feature_control().is_implemented("ExposureTime"):
+                exposure = float(config.get("exposure_us", 20000))
+                remote.get_remote_device_feature_control().get_float_feature("ExposureTime").set(exposure)
+                self._exposure_us = exposure
         if remote.get_remote_device_feature_control().is_implemented("Gain"):
             gain = float(config.get("gain", 0.0))
             remote.get_remote_device_feature_control().get_float_feature("Gain").set(gain)
@@ -333,10 +338,56 @@ class CameraGX(CameraBase):
         self.cam.close_device()
 
     def set_exposure(self, exposure_us: float) -> None:
+        if self._auto_exposure:
+            return
         remote = self.cam
+        try:
+            if hasattr(self.cam, "ExposureMode"):
+                self.cam.ExposureMode.set(self.gx.GxExposureModeEntry.TIMED)
+        except Exception:
+            pass
+        try:
+            if remote.get_remote_device_feature_control().is_implemented("ExposureMode"):
+                remote.get_remote_device_feature_control().get_enum_feature("ExposureMode").set("Timed")
+        except Exception:
+            pass
+        try:
+            if hasattr(self.cam, "ExposureTime"):
+                self.cam.ExposureTime.set(float(exposure_us))
+                self._exposure_us = float(exposure_us)
+                return
+        except Exception:
+            pass
         if remote.get_remote_device_feature_control().is_implemented("ExposureTime"):
             remote.get_remote_device_feature_control().get_float_feature("ExposureTime").set(float(exposure_us))
             self._exposure_us = float(exposure_us)
+
+    def set_auto_exposure(self, enabled: bool) -> None:
+        self._auto_exposure = bool(enabled)
+        try:
+            if hasattr(self.cam, "ExposureAuto"):
+                mode = self.gx.GxAutoEntry.CONTINUOUS if enabled else self.gx.GxAutoEntry.OFF
+                self.cam.ExposureAuto.set(mode)
+        except Exception:
+            pass
+        try:
+            if hasattr(self.cam, "GainAuto"):
+                mode = self.gx.GxAutoEntry.CONTINUOUS if enabled else self.gx.GxAutoEntry.OFF
+                self.cam.GainAuto.set(mode)
+        except Exception:
+            pass
+        remote = self.cam.get_remote_device_feature_control()
+        if remote.is_implemented("ExposureAuto"):
+            enum_feature = remote.get_enum_feature("ExposureAuto")
+            enum_feature.set("Continuous" if enabled else "Off")
+        if remote.is_implemented("GainAuto"):
+            enum_feature = remote.get_enum_feature("GainAuto")
+            enum_feature.set("Continuous" if enabled else "Off")
+        if not enabled:
+            try:
+                self.set_exposure(self._exposure_us)
+            except Exception:
+                pass
 
     @property
     def exposure_us(self) -> float:
@@ -350,6 +401,7 @@ class MockCamera(CameraBase):
         self.slm2_shape = slm2_shape
         self.current_window: Optional[Tuple[int, int]] = None
         self._exposure_us = float(config.get("exposure_us", 20000))
+        self._auto_exposure = bool(config.get("auto_exposure", False))
 
     def update_window(self, center: Optional[Tuple[int, int]]) -> None:
         self.current_window = center
@@ -368,6 +420,9 @@ class MockCamera(CameraBase):
 
     def set_exposure(self, exposure_us: float) -> None:
         self._exposure_us = float(exposure_us)
+
+    def set_auto_exposure(self, enabled: bool) -> None:
+        self._auto_exposure = bool(enabled)
 
     @property
     def exposure_us(self) -> float:
@@ -423,10 +478,18 @@ class SLM2Controller:
         ensure_dir(str(self.output_dir))
 
         heds.SDK.PrintVersion()
-        err = heds.SDK.Init(4, 1)
-        if err != heds.HEDSERR_NoError:
-            raise RuntimeError(heds.SDK.ErrorString(err))
-        self.slm = heds.SLM.Init()
+        global _HEDS_INITED
+        if not _HEDS_INITED:
+            err = heds.SDK.Init(4, 1)
+            if err != heds.HEDSERR_NoError:
+                raise RuntimeError(heds.SDK.ErrorString(err))
+            _HEDS_INITED = True
+        selector = str(config.get("heds_selector", "")).strip()
+        if selector:
+            selector = f"-slm {selector} -nogui"
+            self.slm = heds.SLM.Init(selector, False, 0.0)
+        else:
+            self.slm = heds.SLM.Init("", False, 0.0)
         if self.slm.errorCode() != heds.HEDSERR_NoError:
             raise RuntimeError(heds.SDK.ErrorString(self.slm.errorCode()))
 
@@ -462,6 +525,13 @@ class SLM2Controller:
             raise RuntimeError("未找到可用的 SLM2 显示接口")
         if err != self.heds.HEDSERR_NoError:
             raise RuntimeError(self.heds.SDK.ErrorString(err))
+
+    def close(self) -> None:
+        if hasattr(self.slm, "_Wnd") and self.slm._Wnd is not None:
+            try:
+                self.slm._Wnd.close()
+            except Exception:
+                pass
 
 
 class MockSLM2:
