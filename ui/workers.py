@@ -1,4 +1,5 @@
 import time
+import queue
 from pathlib import Path
 from typing import Optional
 
@@ -30,6 +31,7 @@ class CameraWorker(QtCore.QObject):
         self._camera = camera
         self._running = False
         self._target_fps = max(1.0, float(target_fps))
+        self._command_queue = queue.Queue()
 
     @QtCore.pyqtSlot()
     def start(self) -> None:
@@ -41,6 +43,7 @@ class CameraWorker(QtCore.QObject):
 
         while self._running:
             start = time.time()
+            self._drain_commands()
             try:
                 frame = self._camera.capture()
             except Exception as exc:
@@ -76,6 +79,26 @@ class CameraWorker(QtCore.QObject):
         if hasattr(self._camera, "set_auto_exposure"):
             try:
                 self._camera.set_auto_exposure(bool(enabled))
+            except Exception as exc:
+                self.error.emit(str(exc))
+
+    def enqueue_exposure(self, exposure_us: float) -> None:
+        self._command_queue.put(("exposure", float(exposure_us)))
+
+    def enqueue_auto_exposure(self, enabled: bool) -> None:
+        self._command_queue.put(("auto_exposure", bool(enabled)))
+
+    def _drain_commands(self) -> None:
+        while True:
+            try:
+                command, value = self._command_queue.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                if command == "exposure" and hasattr(self._camera, "set_exposure"):
+                    self._camera.set_exposure(float(value))
+                elif command == "auto_exposure" and hasattr(self._camera, "set_auto_exposure"):
+                    self._camera.set_auto_exposure(bool(value))
             except Exception as exc:
                 self.error.emit(str(exc))
 

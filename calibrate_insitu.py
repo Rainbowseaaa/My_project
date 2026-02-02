@@ -5,6 +5,7 @@
 """
 
 import argparse
+import ctypes
 import json
 import math
 import os
@@ -290,6 +291,17 @@ class CameraBase:
 class CameraGX(CameraBase):
     def __init__(self, config: Dict):
         from importlib import import_module
+        from importlib import util
+
+        if util.find_spec("gxipy") is None:
+            repo_root = Path(__file__).resolve().parent
+            local_gxipy = repo_root / "DahengPython"
+            if local_gxipy.exists():
+                sys.path.insert(0, str(local_gxipy))
+            else:
+                sdk_samples = Path(r"C:\Program Files\Daheng Imaging\GalaxySDK\Development\Samples\Python")
+                if sdk_samples.exists():
+                    sys.path.insert(0, str(sdk_samples))
 
         gx = import_module("gxipy")
         self.gx = gx
@@ -304,34 +316,196 @@ class CameraGX(CameraBase):
                 raise RuntimeError("未检测到相机设备")
             self.cam = self.device_manager.open_device_by_index(1)
         self._auto_exposure = bool(config.get("auto_exposure", False))
+        self._pixel_max = 255.0
         self._setup_camera(config)
         self.cam.stream_on()
         self.avg_frames = int(config.get("avg_frames", 1))
         self._exposure_us = float(config.get("exposure_us", 20000))
 
     def _setup_camera(self, config: Dict) -> None:
-        remote = self.cam
+        remote = self._remote_feature()
         self.set_auto_exposure(self._auto_exposure)
-        if not self._auto_exposure:
-            if remote.get_remote_device_feature_control().is_implemented("ExposureTime"):
+        if not self._auto_exposure and remote is not None:
+            if remote.is_implemented("ExposureMode"):
+                try:
+                    remote.get_enum_feature("ExposureMode").set("Timed")
+                except Exception:
+                    pass
+            if remote.is_implemented("ExposureTime"):
                 exposure = float(config.get("exposure_us", 20000))
-                remote.get_remote_device_feature_control().get_float_feature("ExposureTime").set(exposure)
+                exposure = self._clamp_exposure(exposure)
+                remote.get_float_feature("ExposureTime").set(exposure)
                 self._exposure_us = exposure
-        if remote.get_remote_device_feature_control().is_implemented("Gain"):
-            gain = float(config.get("gain", 0.0))
-            remote.get_remote_device_feature_control().get_float_feature("Gain").set(gain)
+            if remote.is_implemented("Gain"):
+                gain = float(config.get("gain", 0.0))
+                remote.get_float_feature("Gain").set(gain)
+
+    def _remote_feature(self):
+        try:
+            if hasattr(self.cam, "get_remote_device_feature_control"):
+                return self.cam.get_remote_device_feature_control()
+        except Exception:
+            return None
+        return None
+
+    def get_exposure_range(self) -> Optional[Tuple[float, float]]:
+        try:
+            remote = self._remote_feature()
+            if remote is not None and remote.is_implemented("ExposureTime"):
+                exposure_range = remote.get_float_feature("ExposureTime").get_range()
+                return float(exposure_range["min"]), float(exposure_range["max"])
+        except Exception:
+            pass
+        return None
+
+    def _clamp_exposure(self, exposure_us: float) -> float:
+        exposure_us = float(exposure_us)
+        exposure_range = self.get_exposure_range()
+        if exposure_range:
+            min_exp, max_exp = exposure_range
+            if exposure_us < min_exp:
+                return min_exp
+            if exposure_us > max_exp:
+                return max_exp
+        return exposure_us
 
     def capture(self) -> np.ndarray:
-        from DaHeng.GetImage import capture
-
         frames = []
         for _ in range(self.avg_frames):
-            frame = capture(self.cam, self.image_convert)
+            frame = self._capture_frame()
             if frame is None:
                 raise RuntimeError("相机采集失败")
             frames.append(frame.astype(np.float32))
         avg = np.mean(frames, axis=0)
         return avg.astype(np.float32)
+
+    def _capture_frame(self) -> Optional[np.ndarray]:
+        raw_image = self.cam.data_stream[0].get_image()
+        if raw_image is None:
+            return None
+
+        numpy_image = raw_image.get_numpy_array()
+        if numpy_image is not None:
+            return numpy_image
+
+        try:
+            from gxipy.gxidef import DxValidBit, GxPixelFormatEntry
+        except Exception:
+            return None
+
+        pixel_format = raw_image.get_pixel_format()
+        if pixel_format in (
+            GxPixelFormatEntry.MONO8,
+            GxPixelFormatEntry.R8,
+            GxPixelFormatEntry.B8,
+            GxPixelFormatEntry.G8,
+        ):
+            self._pixel_max = 255.0
+            return raw_image.get_numpy_array()
+
+        valid_bits = self._best_valid_bits(pixel_format, DxValidBit, GxPixelFormatEntry)
+        self._pixel_max = float((1 << self._valid_bits_width(valid_bits, DxValidBit)) - 1)
+        self.image_convert.set_dest_format(GxPixelFormatEntry.MONO8)
+        self.image_convert.set_valid_bits(valid_bits)
+        buffer_out_size = self.image_convert.get_buffer_size_for_conversion(raw_image)
+        output_image_array = (ctypes.c_ubyte * buffer_out_size)()
+        output_image = ctypes.addressof(output_image_array)
+        self.image_convert.convert(raw_image, output_image, buffer_out_size, False)
+        return np.frombuffer(output_image_array, dtype=np.ubyte, count=buffer_out_size).reshape(
+            raw_image.frame_data.height, raw_image.frame_data.width
+        )
+
+    @staticmethod
+    def _best_valid_bits(pixel_format, DxValidBit, GxPixelFormatEntry):
+        if pixel_format in (
+            GxPixelFormatEntry.MONO8,
+            GxPixelFormatEntry.BAYER_GR8,
+            GxPixelFormatEntry.BAYER_RG8,
+            GxPixelFormatEntry.BAYER_GB8,
+            GxPixelFormatEntry.BAYER_BG8,
+            GxPixelFormatEntry.RGB8,
+            GxPixelFormatEntry.BGR8,
+            GxPixelFormatEntry.R8,
+            GxPixelFormatEntry.B8,
+            GxPixelFormatEntry.G8,
+        ):
+            return DxValidBit.BIT0_7
+        if pixel_format in (
+            GxPixelFormatEntry.MONO10,
+            GxPixelFormatEntry.MONO10_PACKED,
+            GxPixelFormatEntry.MONO10_P,
+            GxPixelFormatEntry.BAYER_GR10,
+            GxPixelFormatEntry.BAYER_RG10,
+            GxPixelFormatEntry.BAYER_GB10,
+            GxPixelFormatEntry.BAYER_BG10,
+            GxPixelFormatEntry.BAYER_GR10_P,
+            GxPixelFormatEntry.BAYER_RG10_P,
+            GxPixelFormatEntry.BAYER_GB10_P,
+            GxPixelFormatEntry.BAYER_BG10_P,
+            GxPixelFormatEntry.BAYER_GR10_PACKED,
+            GxPixelFormatEntry.BAYER_RG10_PACKED,
+            GxPixelFormatEntry.BAYER_GB10_PACKED,
+            GxPixelFormatEntry.BAYER_BG10_PACKED,
+        ):
+            return DxValidBit.BIT2_9
+        if pixel_format in (
+            GxPixelFormatEntry.MONO12,
+            GxPixelFormatEntry.MONO12_PACKED,
+            GxPixelFormatEntry.MONO12_P,
+            GxPixelFormatEntry.BAYER_GR12,
+            GxPixelFormatEntry.BAYER_RG12,
+            GxPixelFormatEntry.BAYER_GB12,
+            GxPixelFormatEntry.BAYER_BG12,
+            GxPixelFormatEntry.BAYER_GR12_P,
+            GxPixelFormatEntry.BAYER_RG12_P,
+            GxPixelFormatEntry.BAYER_GB12_P,
+            GxPixelFormatEntry.BAYER_BG12_P,
+            GxPixelFormatEntry.BAYER_GR12_PACKED,
+            GxPixelFormatEntry.BAYER_RG12_PACKED,
+            GxPixelFormatEntry.BAYER_GB12_PACKED,
+            GxPixelFormatEntry.BAYER_BG12_PACKED,
+        ):
+            return DxValidBit.BIT4_11
+        if pixel_format in (
+            GxPixelFormatEntry.MONO14,
+            GxPixelFormatEntry.MONO14_P,
+            GxPixelFormatEntry.BAYER_GR14,
+            GxPixelFormatEntry.BAYER_RG14,
+            GxPixelFormatEntry.BAYER_GB14,
+            GxPixelFormatEntry.BAYER_BG14,
+            GxPixelFormatEntry.BAYER_GR14_P,
+            GxPixelFormatEntry.BAYER_RG14_P,
+            GxPixelFormatEntry.BAYER_GB14_P,
+            GxPixelFormatEntry.BAYER_BG14_P,
+        ):
+            return DxValidBit.BIT6_13
+        if pixel_format in (
+            GxPixelFormatEntry.MONO16,
+            GxPixelFormatEntry.BAYER_GR16,
+            GxPixelFormatEntry.BAYER_RG16,
+            GxPixelFormatEntry.BAYER_GB16,
+            GxPixelFormatEntry.BAYER_BG16,
+        ):
+            return DxValidBit.BIT8_15
+        return DxValidBit.BIT0_7
+
+    @staticmethod
+    def _valid_bits_width(valid_bits, DxValidBit) -> int:
+        if valid_bits == DxValidBit.BIT0_7:
+            return 8
+        if valid_bits == DxValidBit.BIT2_9:
+            return 10
+        if valid_bits == DxValidBit.BIT4_11:
+            return 12
+        if valid_bits == DxValidBit.BIT6_13:
+            return 14
+        if valid_bits == DxValidBit.BIT8_15:
+            return 16
+        return 8
+
+    @property
+    def pixel_max(self) -> float:
+        return float(self._pixel_max)
 
     def close(self) -> None:
         self.cam.stream_off()
@@ -340,27 +514,26 @@ class CameraGX(CameraBase):
     def set_exposure(self, exposure_us: float) -> None:
         if self._auto_exposure:
             return
-        remote = self.cam
-        try:
-            if hasattr(self.cam, "ExposureMode"):
-                self.cam.ExposureMode.set(self.gx.GxExposureModeEntry.TIMED)
-        except Exception:
-            pass
-        try:
-            if remote.get_remote_device_feature_control().is_implemented("ExposureMode"):
-                remote.get_remote_device_feature_control().get_enum_feature("ExposureMode").set("Timed")
-        except Exception:
-            pass
-        try:
-            if hasattr(self.cam, "ExposureTime"):
-                self.cam.ExposureTime.set(float(exposure_us))
-                self._exposure_us = float(exposure_us)
-                return
-        except Exception:
-            pass
-        if remote.get_remote_device_feature_control().is_implemented("ExposureTime"):
-            remote.get_remote_device_feature_control().get_float_feature("ExposureTime").set(float(exposure_us))
-            self._exposure_us = float(exposure_us)
+        remote = self._remote_feature()
+        if remote is None:
+            raise RuntimeError("相机不支持远程特征控制，无法设置曝光")
+
+        exposure_us = self._clamp_exposure(exposure_us)
+        if remote.is_implemented("ExposureAuto"):
+            remote.get_enum_feature("ExposureAuto").set("Off")
+        if remote.is_implemented("GainAuto"):
+            remote.get_enum_feature("GainAuto").set("Off")
+        if remote.is_implemented("ExposureMode"):
+            remote.get_enum_feature("ExposureMode").set("Timed")
+        if not remote.is_implemented("ExposureTime"):
+            raise RuntimeError("相机不支持 ExposureTime，无法设置曝光")
+
+        exposure_feature = remote.get_float_feature("ExposureTime")
+        exposure_feature.set(float(exposure_us))
+        readback = float(exposure_feature.get())
+        if abs(readback - float(exposure_us)) > 1.0:
+            raise RuntimeError(f"曝光设置失败：写入 {exposure_us:.3f} us，读回 {readback:.3f} us")
+        self._exposure_us = float(readback)
 
     def set_auto_exposure(self, enabled: bool) -> None:
         self._auto_exposure = bool(enabled)
@@ -376,13 +549,19 @@ class CameraGX(CameraBase):
                 self.cam.GainAuto.set(mode)
         except Exception:
             pass
-        remote = self.cam.get_remote_device_feature_control()
-        if remote.is_implemented("ExposureAuto"):
-            enum_feature = remote.get_enum_feature("ExposureAuto")
-            enum_feature.set("Continuous" if enabled else "Off")
-        if remote.is_implemented("GainAuto"):
-            enum_feature = remote.get_enum_feature("GainAuto")
-            enum_feature.set("Continuous" if enabled else "Off")
+        remote = self._remote_feature()
+        if remote is not None:
+            if remote.is_implemented("ExposureAuto"):
+                enum_feature = remote.get_enum_feature("ExposureAuto")
+                enum_feature.set("Continuous" if enabled else "Off")
+            if remote.is_implemented("GainAuto"):
+                enum_feature = remote.get_enum_feature("GainAuto")
+                enum_feature.set("Continuous" if enabled else "Off")
+            if not enabled and remote.is_implemented("ExposureMode"):
+                try:
+                    remote.get_enum_feature("ExposureMode").set("Timed")
+                except Exception:
+                    pass
         if not enabled:
             try:
                 self.set_exposure(self._exposure_us)

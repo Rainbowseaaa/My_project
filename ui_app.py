@@ -356,6 +356,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.camera = MockCamera(self.config.get("mock", {}), slm2_shape)
             else:
                 self.camera = CameraGX(self.config.get("camera", {}))
+                if hasattr(self.camera, "get_exposure_range"):
+                    exposure_range = self.camera.get_exposure_range()
+                    if exposure_range:
+                        min_exp, max_exp = exposure_range
+                        self.camera_control.exposure_spin.setRange(min_exp, max_exp)
+                        current = self.camera_control.exposure_spin.value()
+                        if current < min_exp:
+                            self.camera_control.exposure_spin.setValue(min_exp)
+                        elif current > max_exp:
+                            self.camera_control.exposure_spin.setValue(max_exp)
             self.camera_worker = CameraWorker(self.camera, self.config.get("camera", {}).get("target_fps", 30))
             self.camera_worker.moveToThread(self.camera_thread)
             self.camera_thread.started.connect(self.camera_worker.start)
@@ -808,7 +818,18 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.camera_control.flip_v.isChecked():
             frame = np.flipud(frame)
 
-        self.image_item.setImage(frame, autoLevels=True, autoDownsample=False)
+        levels = None
+        if frame.dtype.kind == "f":
+            if self.camera is not None and hasattr(self.camera, "pixel_max"):
+                max_val = float(self.camera.pixel_max)
+                if max_val > 0:
+                    levels = (0.0, max_val)
+            if levels is None:
+                max_val = float(np.max(frame)) if frame.size else 1.0
+                if max_val <= 0:
+                    max_val = 1.0
+                levels = (0.0, max_val)
+        self.image_item.setImage(frame, autoLevels=False, autoDownsample=False, levels=levels)
         frame_shape = (int(frame.shape[0]), int(frame.shape[1]))
         if self._camera_frame_shape != frame_shape:
             self._camera_frame_shape = frame_shape
@@ -1032,22 +1053,28 @@ class MainWindow(QtWidgets.QMainWindow):
             self.log("相机未初始化，无法设置曝光")
             return
         auto_exposure = self.camera_control.auto_exposure_checkbox.isChecked()
-        QtCore.QMetaObject.invokeMethod(
-            self.camera_worker,
-            "set_auto_exposure",
-            QtCore.Qt.ConnectionType.QueuedConnection,
-            QtCore.Q_ARG(bool, auto_exposure),
-        )
+        if hasattr(self.camera_worker, "enqueue_auto_exposure"):
+            self.camera_worker.enqueue_auto_exposure(auto_exposure)
+        else:
+            QtCore.QMetaObject.invokeMethod(
+                self.camera_worker,
+                "set_auto_exposure",
+                QtCore.Qt.ConnectionType.QueuedConnection,
+                QtCore.Q_ARG(bool, auto_exposure),
+            )
         if auto_exposure:
             self.log("设置自动曝光: ON")
             return
         exposure_us = self.camera_control.exposure_spin.value()
-        QtCore.QMetaObject.invokeMethod(
-            self.camera_worker,
-            "set_exposure",
-            QtCore.Qt.ConnectionType.QueuedConnection,
-            QtCore.Q_ARG(float, exposure_us),
-        )
+        if hasattr(self.camera_worker, "enqueue_exposure"):
+            self.camera_worker.enqueue_exposure(exposure_us)
+        else:
+            QtCore.QMetaObject.invokeMethod(
+                self.camera_worker,
+                "set_exposure",
+                QtCore.Qt.ConnectionType.QueuedConnection,
+                QtCore.Q_ARG(float, exposure_us),
+            )
         self.log(f"设置曝光: {exposure_us:.0f} us")
 
     def _refresh_heds_devices(self) -> None:

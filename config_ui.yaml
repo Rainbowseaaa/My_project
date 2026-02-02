@@ -34,8 +34,8 @@ camera:
   exposure_us: 20000
   auto_exposure: false
   gain: 0.0
-  avg_frames: 3
-  target_fps: 30
+  avg_frames: 1
+  target_fps: 40
   overexposure_threshold: 250
   overexposure_ratio: 0.01
   record_interval_ms: 200
