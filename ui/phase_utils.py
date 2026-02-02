@@ -201,6 +201,58 @@ def make_preview_image(
     return img
 
 
+def generate_window_grating_phase(
+    slm_shape: Tuple[int, int],
+    center: Tuple[float, float],
+    window_size_px: float,
+    grating_period_px: float,
+    window_shape: str = "square",
+) -> np.ndarray:
+    height, width = slm_shape
+    period = float(grating_period_px)
+    if period == 0:
+        raise ValueError("光栅周期不能为 0")
+    period_abs = abs(period)
+    yy, xx = np.mgrid[0:height, 0:width]
+    grating = (2 * np.pi * (xx / period_abs)) % (2 * np.pi)
+    if period < 0:
+        grating = -grating
+
+    cx, cy = center
+    half = max(float(window_size_px) / 2.0, 0.0)
+    if window_shape == "circle":
+        mask = (xx - cx) ** 2 + (yy - cy) ** 2 <= half ** 2
+    else:
+        mask = (abs(xx - cx) <= half) & (abs(yy - cy) <= half)
+    phase = np.zeros_like(grating)
+    phase[mask] = grating[mask]
+    return phase
+
+
+def generate_lens_phase(
+    slm_shape: Tuple[int, int],
+    center: Tuple[float, float],
+    focus_mm: float,
+    pixel_pitch_um: float = 8.0,
+    wavelength_nm: float = 532.0,
+) -> np.ndarray:
+    height, width = slm_shape
+    focus_mm = float(focus_mm)
+    if focus_mm == 0:
+        return np.zeros((height, width), dtype=np.float64)
+    pitch = float(pixel_pitch_um) * 1e-6
+    wavelength = float(wavelength_nm) * 1e-9
+    f = focus_mm * 1e-3
+
+    yy, xx = np.mgrid[0:height, 0:width]
+    cx, cy = center
+    x = (xx - cx) * pitch
+    y = (yy - cy) * pitch
+    r2 = x ** 2 + y ** 2
+    phase = (-np.pi / (wavelength * f)) * r2
+    return phase
+
+
 def load_hologram_file(path: str, shape: Tuple[int, int]) -> np.ndarray:
     file_path = Path(path)
     suffix = file_path.suffix.lower()

@@ -681,6 +681,7 @@ class SLM2Controller:
             phase = apply_compensation(phase, self.comp)
         img_u8 = phase_to_uint8(phase)
         img = Image.fromarray(img_u8)
+        ensure_dir(str(self.output_dir))
         path = self.output_dir / "slm2_temp.bmp"
         img.save(path)
         if hasattr(self.slm, "showPhaseDataFromFile"):
@@ -694,6 +695,7 @@ class SLM2Controller:
 
     def display_gray(self, img_u8: np.ndarray, use_comp: bool = False) -> None:
         img = Image.fromarray(img_u8)
+        ensure_dir(str(self.output_dir))
         path = self.output_dir / "slm2_temp.bmp"
         img.save(path)
         if hasattr(self.slm, "showImageDataFromFile"):

@@ -1,41 +1,90 @@
 slm1:
-  device_type: "upo"  # upo 或 holoeye
+  device_type: upo
   screen_num: 1
-  heds_selector: ""
+  heds_selector: ''
   bolduc_period: 8
   amp_norm_max: 0.9
-  compensation_path: ""
+  compensation_path: ''
   play_interval_ms: 500
-  sdk_path: ""
+  sdk_path: ''
   pixel_pitch_um: 8.0
   wavelength_nm: 532.0
-
 slm2:
-  device_type: "holoeye"  # upo 或 holoeye
-  compensation_path: "Holoeye_phase_correct_8bit.bmp"
-  sdk_path: ""
+  device_type: holoeye
+  compensation_path: Holoeye_phase_correct_8bit.bmp
+  sdk_path: ''
   screen_num: 2
-  heds_selector: ""
-  block_mode: "checkerboard"
-  outside_mode: "zero"
-  window_size_px: [400, 400]
+  heds_selector: ''
+  block_mode: checkerboard
+  outside_mode: zero
+  window_size_px:
+  - 400
+  - 400
+  pixel_pitch_um: 8.0
+  wavelength_nm: 532.0
+  calibration:
+    center_range_x_px: 200
+    center_range_y_px: 200
+    center_step_px: 20
+    window_size_px: 200
+    grating_period_px: 8
+    roi_x1: 0
+    roi_x2: 100
+    roi_y1: 0
+    roi_y2: 100
+    distance_init_mm: 200.0
+    distance_range_mm: 100.0
+    distance_step_mm: 10.0
+    dist_roi_x1: 0
+    dist_roi_x2: 100
+    dist_roi_y1: 0
+    dist_roi_y2: 100
+    centers:
+    - - 1820
+      - 540
+    - - 1200
+      - 540
+    - - 720
+      - 540
+    - - 250
+      - 500
+    distances_mm:
+    - 210.0
+    - null
+    - null
+    - null
   default_centers:
-    - [1680, 540]
-    - [1200, 540]
-    - [720, 540]
-    - [240, 540]
+  - - 1680
+    - 540
+  - - 1200
+    - 540
+  - - 720
+    - 540
+  - - 240
+    - 540
   layers:
-    - {path: "", dx: 0, dy: 0, enabled: true}
-    - {path: "", dx: 0, dy: 0, enabled: true}
-    - {path: "", dx: 0, dy: 0, enabled: true}
-    - {path: "", dx: 0, dy: 0, enabled: true}
-  mat_key: "phase"
-
+  - path: ''
+    dx: 0
+    dy: 0
+    enabled: true
+  - path: ''
+    dx: 0
+    dy: 0
+    enabled: true
+  - path: ''
+    dx: 0
+    dy: 0
+    enabled: true
+  - path: ''
+    dx: 0
+    dy: 0
+    enabled: true
+  mat_key: phase
 camera:
-  device_sn: ""
+  device_sn: ''
   exposure_us: 20000
   auto_exposure: false
-  auto_exposure_mode: "software"  # software 或 camera
+  auto_exposure_mode: software
   auto_exposure_target: 120.0
   auto_exposure_interval_ms: 200
   auto_exposure_min_ratio: 0.5
@@ -47,16 +96,19 @@ camera:
   overexposure_threshold: 250
   overexposure_ratio: 0.01
   record_interval_ms: 200
-
 output:
-  slm1_tmp_dir: "output/slm1_tmp"
-  slm2_tmp_dir: "output/slm2_tmp"
-
+  slm1_tmp_dir: output/slm1_tmp
+  slm2_tmp_dir: output/slm2_tmp
 datasets:
-  mnist_dir: "data/mnist"
-
+  mnist_dir: data/mnist
 mock:
-  slm1_size: [1200, 1920]
-  slm2_size: [1200, 1920]
-  camera_size: [800, 800]
+  slm1_size:
+  - 1200
+  - 1920
+  slm2_size:
+  - 1200
+  - 1920
+  camera_size:
+  - 800
+  - 800
   noise_std: 5.0

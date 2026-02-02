@@ -12,7 +12,15 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 pg.setConfigOptions(imageAxisOrder="row-major")
 
 from calibrate_insitu import CameraGX, MockCamera, MockSLM2, SLM1Controller, SLM2Controller
-from ui.phase_utils import apply_compensation, compose_layers, load_compensation, load_phase_file, make_preview_image
+from ui.phase_utils import (
+    apply_compensation,
+    compose_layers,
+    generate_lens_phase,
+    generate_window_grating_phase,
+    load_compensation,
+    load_phase_file,
+    make_preview_image,
+)
 from ui.widgets import (
     CameraControlPanel,
     ImageSourcePanel,
@@ -107,10 +115,11 @@ class AspectRatioContainer(QtWidgets.QWidget):
 
 
 class MainWindow(QtWidgets.QMainWindow):
-    def __init__(self, config: dict, mock: bool = False) -> None:
+    def __init__(self, config: dict, mock: bool = False, config_path: str = "config_ui.yaml") -> None:
         super().__init__()
         self.setWindowTitle("SLM 控制 UI")
         self.config = config
+        self.config_path = config_path
         self.mock = mock
 
         self.slm1_controller = None
@@ -132,6 +141,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._camera_frame_shape: Optional[tuple[int, int]] = None
         self._camera_view_mode = "full"
         self._heds_inited = False
+        self._latest_camera_frame = None
+        self._calib_timer = QtCore.QTimer(self)
+        self._calib_timer.timeout.connect(self._calib_step)
+        self._calib_state = None
+        self._calib_results = {}
         self._auto_exposure_last_time = 0.0
         cam_cfg = self.config.get("camera", {})
         self._auto_exposure_mode = str(cam_cfg.get("auto_exposure_mode", "software")).lower()
@@ -206,6 +220,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.slm2_panel.slm2_comp_flip_h.stateChanged.connect(self.on_layer_change)
         self.slm2_panel.slm2_comp_flip_v.stateChanged.connect(self.on_layer_change)
         self.slm2_panel.auto_apply_checkbox.stateChanged.connect(self.on_layer_change)
+        self.slm2_panel.calib_center_start.clicked.connect(self.start_center_calibration)
+        self.slm2_panel.calib_center_stop.clicked.connect(self.stop_calibration)
+        self.slm2_panel.calib_center_pause.clicked.connect(self.pause_calibration)
+        self.slm2_panel.calib_center_resume.clicked.connect(self.resume_calibration)
+        self.slm2_panel.calib_dist_start.clicked.connect(self.start_distance_calibration)
+        self.slm2_panel.calib_dist_stop.clicked.connect(self.stop_calibration)
+        self.slm2_panel.calib_dist_pause.clicked.connect(self.pause_calibration)
+        self.slm2_panel.calib_dist_resume.clicked.connect(self.resume_calibration)
+        self.slm2_panel.calib_log_list.itemClicked.connect(self.on_calib_log_clicked)
+        self.slm2_panel.calib_layer_center_combo.currentIndexChanged.connect(self._sync_calib_center_from_layer)
+        self.slm2_panel.calib_layer_distance_combo.currentIndexChanged.connect(self._sync_calib_distance_from_layer)
 
         self.run_button.clicked.connect(self.run_all)
         self.stop_button.clicked.connect(self.stop_all)
@@ -462,6 +487,7 @@ class MainWindow(QtWidgets.QMainWindow):
         slm2_comp = self.config.get("slm2", {}).get("compensation_path", "")
         slm1_type = self.config.get("slm1", {}).get("device_type", "upo")
         slm2_type = self.config.get("slm2", {}).get("device_type", "holoeye")
+        slm2_calib = self.config.get("slm2", {}).get("calibration", {})
 
         # 确定 SLM2 分辨率以计算默认中心
         slm2_shape = self._slm_shape_for_type(slm2_type)
@@ -491,7 +517,7 @@ class MainWindow(QtWidgets.QMainWindow):
         layer_cfg = self.config.get("slm2", {}).get("layers", [])
         for idx, widget in enumerate(self.slm2_panel.layer_widgets):
             # 1. 计算基准中心
-            if idx < len(default_centers):
+            if idx < len(default_centers) and default_centers[idx] is not None:
                 base_center = default_centers[idx]
             else:
                 base_center = [slm2_shape[1] // 2, slm2_shape[0] // 2]
@@ -510,6 +536,25 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 # 只有默认中心
                 widget.set_center(base_center[0], base_center[1])
+
+        self._sync_calib_center_from_layer()
+        self.slm2_panel.calib_center_range_x.setValue(int(slm2_calib.get("center_range_x_px", 200)))
+        self.slm2_panel.calib_center_range_y.setValue(int(slm2_calib.get("center_range_y_px", 200)))
+        self.slm2_panel.calib_center_step.setValue(int(slm2_calib.get("center_step_px", 20)))
+        self.slm2_panel.calib_window_size.setValue(int(slm2_calib.get("window_size_px", 200)))
+        self.slm2_panel.calib_grating_period.setValue(int(slm2_calib.get("grating_period_px", 8)))
+        self.slm2_panel.calib_roi_x1.setValue(int(slm2_calib.get("roi_x1", 0)))
+        self.slm2_panel.calib_roi_x2.setValue(int(slm2_calib.get("roi_x2", 100)))
+        self.slm2_panel.calib_roi_y1.setValue(int(slm2_calib.get("roi_y1", 0)))
+        self.slm2_panel.calib_roi_y2.setValue(int(slm2_calib.get("roi_y2", 100)))
+        self.slm2_panel.calib_dist_init.setValue(float(slm2_calib.get("distance_init_mm", 200.0)))
+        self.slm2_panel.calib_dist_range.setValue(float(slm2_calib.get("distance_range_mm", 100.0)))
+        self.slm2_panel.calib_dist_step.setValue(float(slm2_calib.get("distance_step_mm", 10.0)))
+        self.slm2_panel.calib_dist_roi_x1.setValue(int(slm2_calib.get("dist_roi_x1", 0)))
+        self.slm2_panel.calib_dist_roi_x2.setValue(int(slm2_calib.get("dist_roi_x2", 100)))
+        self.slm2_panel.calib_dist_roi_y1.setValue(int(slm2_calib.get("dist_roi_y1", 0)))
+        self.slm2_panel.calib_dist_roi_y2.setValue(int(slm2_calib.get("dist_roi_y2", 100)))
+        self._sync_calib_distance_from_layer()
 
         exposure_us = float(self.config.get("camera", {}).get("exposure_us", 20000))
         self.camera_control.exposure_spin.setValue(exposure_us)
@@ -920,7 +965,116 @@ class MainWindow(QtWidgets.QMainWindow):
         pixmap = QtGui.QPixmap.fromImage(qimage)
         self.preview_panel.update_pixmap(pixmap)
 
+    def _calib_add_log(self, kind: str, layer: int, result: str, data: object) -> None:
+        seq = len(self._calib_results) + 1
+        log_id = f"{kind.upper()}-{seq:03d}"
+        self._calib_results[log_id] = {"kind": kind, "layer": layer, "data": data, "result": result}
+        item = QtWidgets.QListWidgetItem(f"{log_id} | L{layer} | {result}")
+        item.setData(QtCore.Qt.ItemDataRole.UserRole, log_id)
+        self.slm2_panel.calib_log_list.addItem(item)
+
+    def on_calib_log_clicked(self, item: QtWidgets.QListWidgetItem) -> None:
+        log_id = item.data(QtCore.Qt.ItemDataRole.UserRole)
+        if not log_id or log_id not in self._calib_results:
+            return
+        entry = self._calib_results[log_id]
+        kind = entry["kind"]
+        data = entry["data"]
+        self._show_calib_result(kind, data, log_id)
+
+    def _render_heatmap_image(self, data: np.ndarray) -> Image.Image:
+        heat = np.asarray(data, dtype=np.float64)
+        if heat.size == 0:
+            return Image.new("RGB", (200, 150), color=(30, 30, 30))
+        vmin = float(np.min(heat))
+        vmax = float(np.max(heat))
+        if vmax <= vmin:
+            vmax = vmin + 1.0
+        norm = (heat - vmin) / (vmax - vmin)
+        norm = np.clip(norm, 0.0, 1.0)
+        img = (norm * 255).astype(np.uint8)
+        return Image.fromarray(img, mode="L").convert("RGB")
+
+    def _render_curve_image(self, data: list[tuple[float, float]]) -> Image.Image:
+        width, height = 320, 200
+        img = Image.new("RGB", (width, height), color=(25, 25, 25))
+        if not data:
+            return img
+        xs = np.array([d for d, _ in data], dtype=np.float64)
+        ys = np.array([v for _, v in data], dtype=np.float64)
+        x_min, x_max = float(xs.min()), float(xs.max())
+        y_min, y_max = float(ys.min()), float(ys.max())
+        if x_max <= x_min:
+            x_max = x_min + 1.0
+        if y_max <= y_min:
+            y_max = y_min + 1.0
+        from PIL import ImageDraw
+        draw = ImageDraw.Draw(img)
+        pad = 10
+        last = None
+        for x, y in zip(xs, ys):
+            px = pad + (x - x_min) / (x_max - x_min) * (width - 2 * pad)
+            py = height - pad - (y - y_min) / (y_max - y_min) * (height - 2 * pad)
+            if last is not None:
+                draw.line([last[0], last[1], px, py], fill=(80, 200, 255), width=2)
+            last = (px, py)
+        return img
+
+    def _show_calib_result(self, kind: str, data, title: str) -> None:
+        try:
+            import matplotlib.pyplot as plt
+        except Exception as exc:
+            self.log(f"无法显示标定结果: {exc}")
+            return
+        plt.figure(title)
+        plt.clf()
+        if kind == "center":
+            heat = np.asarray(data.get("heatmap"), dtype=np.float64)
+            xs = data.get("xs") or [0, heat.shape[1] - 1]
+            ys = data.get("ys") or [0, heat.shape[0] - 1]
+            if len(xs) >= 2 and len(ys) >= 2:
+                extent = [min(xs), max(xs), min(ys), max(ys)]
+            else:
+                extent = None
+            plt.imshow(heat, cmap="inferno", origin="lower", extent=extent, aspect="auto")
+            plt.colorbar()
+            plt.xlabel("Center X (px)")
+            plt.ylabel("Center Y (px)")
+            plt.title(title)
+        else:
+            if data:
+                xs = [d for d, _ in data]
+                ys = [v for _, v in data]
+                plt.plot(xs, ys, "-o")
+            plt.xlabel("Distance (mm)")
+            plt.ylabel("Spot Diameter (px)")
+            plt.title(title)
+        plt.show(block=False)
+
+    def _sync_calib_center_from_layer(self) -> None:
+        idx = int(self.slm2_panel.calib_layer_center_combo.currentData() or 1) - 1
+        if 0 <= idx < len(self.slm2_panel.layer_widgets):
+            layer = self.slm2_panel.layer_widgets[idx]
+            self.slm2_panel.calib_center_cx.setValue(int(layer.cx_spin.value()))
+            self.slm2_panel.calib_center_cy.setValue(int(layer.cy_spin.value()))
+
+    def _sync_calib_distance_from_layer(self) -> None:
+        idx = int(self.slm2_panel.calib_layer_distance_combo.currentData() or 1) - 1
+        if 0 <= idx < len(self.slm2_panel.layer_widgets):
+            layer = self.slm2_panel.layer_widgets[idx]
+            self.slm2_panel.calib_dist_cx.setValue(int(layer.cx_spin.value()))
+            self.slm2_panel.calib_dist_cy.setValue(int(layer.cy_spin.value()))
+
+    def _save_config(self) -> None:
+        try:
+            import yaml
+            with open(self.config_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(self.config, f, allow_unicode=True, sort_keys=False)
+        except Exception as exc:
+            self.log(f"保存配置失败: {exc}")
+
     def update_frame(self, frame: np.ndarray, fps: float) -> None:
+        self._latest_camera_frame = frame
         if self.camera_control.flip_h.isChecked():
             frame = np.fliplr(frame)
         if self.camera_control.flip_v.isChecked():
@@ -965,6 +1119,308 @@ class MainWindow(QtWidgets.QMainWindow):
                     Image.fromarray(img).save(path)
                 self.last_record_time = now
         self.update_roi_stats()
+
+    def _calib_prepare_slm2_shape(self) -> tuple[int, int]:
+        if self.slm2_controller is not None:
+            return (self.slm2_controller.height, self.slm2_controller.width)
+        slm2_type = self.slm2_panel.device_combo.currentData() or self.config.get("slm2", {}).get("device_type", "holoeye")
+        return self._slm_shape_for_type(slm2_type)
+
+    def _calib_load_phase(self, phase: np.ndarray) -> None:
+        use_comp = False
+        comp_path = ""
+        comp_flip_h = False
+        comp_flip_v = False
+        if self._calib_state:
+            use_comp = bool(self._calib_state.get("use_comp", False))
+            comp_path = str(self._calib_state.get("comp_path", ""))
+            comp_flip_h = bool(self._calib_state.get("comp_flip_h", False))
+            comp_flip_v = bool(self._calib_state.get("comp_flip_v", False))
+            if use_comp and comp_path:
+                comp = load_compensation(comp_path, phase.shape, meaning="encoded_0_255")
+                if comp is not None:
+                    if comp_flip_h:
+                        comp = np.fliplr(comp)
+                    if comp_flip_v:
+                        comp = np.flipud(comp)
+                    phase = apply_compensation(phase, comp)
+        self._latest_slm2_loaded_phase = phase
+        if self.slm2_worker is not None:
+            QtCore.QMetaObject.invokeMethod(
+                self.slm2_worker,
+                "load_phase",
+                QtCore.Qt.ConnectionType.QueuedConnection,
+                QtCore.Q_ARG(object, phase),
+                QtCore.Q_ARG(bool, False),
+                QtCore.Q_ARG(str, ""),
+                QtCore.Q_ARG(bool, False),
+                QtCore.Q_ARG(bool, False),
+            )
+        self.update_preview()
+
+    def start_center_calibration(self) -> None:
+        if self.camera_worker is None or self.slm2_worker is None:
+            self.log("请先启动相机与 SLM2")
+            return
+        slm_shape = self._calib_prepare_slm2_shape()
+        layer = int(self.slm2_panel.calib_layer_center_combo.currentData() or 1)
+        cx = int(self.slm2_panel.calib_center_cx.value())
+        cy = int(self.slm2_panel.calib_center_cy.value())
+        rx = int(self.slm2_panel.calib_center_range_x.value())
+        ry = int(self.slm2_panel.calib_center_range_y.value())
+        step = int(self.slm2_panel.calib_center_step.value())
+        window_size = int(self.slm2_panel.calib_window_size.value())
+        window_shape = self.slm2_panel.calib_window_shape.currentData() or "square"
+        grating_period = int(self.slm2_panel.calib_grating_period.value())
+        use_comp = self.slm2_panel.calib_comp_checkbox.isChecked()
+        comp_path = self.slm2_panel.slm2_comp_edit.text().strip()
+        comp_flip_h = self.slm2_panel.slm2_comp_flip_h.isChecked()
+        comp_flip_v = self.slm2_panel.slm2_comp_flip_v.isChecked()
+        roi_x1 = int(self.slm2_panel.calib_roi_x1.value())
+        roi_x2 = int(self.slm2_panel.calib_roi_x2.value())
+        roi_y1 = int(self.slm2_panel.calib_roi_y1.value())
+        roi_y2 = int(self.slm2_panel.calib_roi_y2.value())
+
+        if rx <= 0:
+            xs = [cx]
+        else:
+            xs = list(range(cx - rx, cx + rx + 1, step))
+        if ry <= 0:
+            ys = [cy]
+        else:
+            ys = list(range(cy - ry, cy + ry + 1, step))
+        grid = [(x, y) for y in ys for x in xs]
+        heatmap = np.zeros((len(ys), len(xs)), dtype=np.float64)
+        self._calib_state = {
+            "type": "center",
+            "layer": layer,
+            "slm_shape": slm_shape,
+            "window_size": window_size,
+            "window_shape": window_shape,
+            "grating_period": grating_period,
+            "use_comp": use_comp,
+            "comp_path": comp_path,
+            "comp_flip_h": comp_flip_h,
+            "comp_flip_v": comp_flip_v,
+            "roi": (roi_x1, roi_x2, roi_y1, roi_y2),
+            "xs": xs,
+            "ys": ys,
+            "grid": grid,
+            "index": 0,
+            "pending": False,
+            "heatmap": heatmap,
+            "paused": False,
+        }
+        self._calib_timer.start(120)
+        self.log(f"开始中心标定 L{layer}")
+
+    def start_distance_calibration(self) -> None:
+        if self.camera_worker is None or self.slm2_worker is None:
+            self.log("请先启动相机与 SLM2")
+            return
+        slm_shape = self._calib_prepare_slm2_shape()
+        layer = int(self.slm2_panel.calib_layer_distance_combo.currentData() or 1)
+        init_d = float(self.slm2_panel.calib_dist_init.value())
+        r = float(self.slm2_panel.calib_dist_range.value())
+        step = float(self.slm2_panel.calib_dist_step.value())
+        values = []
+        d = init_d - r
+        while d <= init_d + r + 1e-6:
+            values.append(d)
+            d += step
+        self._calib_state = {
+            "type": "distance",
+            "layer": layer,
+            "slm_shape": slm_shape,
+            "use_comp": self.slm2_panel.calib_dist_comp_checkbox.isChecked(),
+            "comp_path": self.slm2_panel.slm2_comp_edit.text().strip(),
+            "comp_flip_h": self.slm2_panel.slm2_comp_flip_h.isChecked(),
+            "comp_flip_v": self.slm2_panel.slm2_comp_flip_v.isChecked(),
+            "roi": (
+                int(self.slm2_panel.calib_dist_roi_x1.value()),
+                int(self.slm2_panel.calib_dist_roi_x2.value()),
+                int(self.slm2_panel.calib_dist_roi_y1.value()),
+                int(self.slm2_panel.calib_dist_roi_y2.value()),
+            ),
+            "distances": values,
+            "index": 0,
+            "pending": False,
+            "results": [],
+            "paused": False,
+        }
+        self._calib_timer.start(120)
+        self.log(f"开始距离标定 L{layer}")
+
+    def stop_calibration(self) -> None:
+        if self._calib_state and self._calib_state.get("type") == "center":
+            slm_shape = self._calib_prepare_slm2_shape()
+            self._calib_load_phase(np.zeros(slm_shape, dtype=np.float64))
+        self._calib_timer.stop()
+        self._calib_state = None
+        self.slm2_panel.calib_center_status.setText("当前窗口中心: -")
+        self.slm2_panel.calib_dist_status.setText("当前距离: -")
+        self.log("标定已停止")
+
+    def pause_calibration(self) -> None:
+        if not self._calib_state:
+            return
+        self._calib_state["paused"] = True
+        if self._calib_state.get("type") == "center":
+            self.log("中心标定已暂停")
+        elif self._calib_state.get("type") == "distance":
+            self.log("距离标定已暂停")
+
+    def resume_calibration(self) -> None:
+        if not self._calib_state:
+            return
+        self._calib_state["paused"] = False
+        if self._calib_state.get("type") == "center":
+            self.log("中心标定继续")
+        elif self._calib_state.get("type") == "distance":
+            self.log("距离标定继续")
+
+    def _calib_step(self) -> None:
+        if not self._calib_state:
+            return
+        state = self._calib_state
+        if state.get("paused"):
+            return
+        frame = self._latest_camera_frame
+        if state["type"] == "center":
+            if state["index"] >= len(state["grid"]) and not state["pending"]:
+                heatmap = state["heatmap"]
+                ys = state["ys"]
+                xs = state["xs"]
+                if heatmap.size:
+                    idx = int(np.argmin(heatmap))
+                    iy, ix = divmod(idx, heatmap.shape[1])
+                    best_center = (xs[ix], ys[iy])
+                else:
+                    best_center = (state["grid"][0][0], state["grid"][0][1])
+                calib_cfg = self.config.setdefault("slm2", {}).setdefault("calibration", {})
+                centers = calib_cfg.get("centers", [None] * 4)
+                while len(centers) < 4:
+                    centers.append(None)
+                centers[state["layer"] - 1] = [int(best_center[0]), int(best_center[1])]
+                calib_cfg["centers"] = centers
+                self._save_config()
+                layer_idx = state["layer"] - 1
+                if 0 <= layer_idx < len(self.slm2_panel.layer_widgets):
+                    self.slm2_panel.layer_widgets[layer_idx].set_center(best_center[0], best_center[1])
+                self._calib_add_log(
+                    "center",
+                    state["layer"],
+                    f"center=({best_center[0]},{best_center[1]})",
+                    {"heatmap": heatmap, "xs": xs, "ys": ys},
+                )
+                self._calib_timer.stop()
+                self._calib_state = None
+                self.log(f"中心标定完成 L{state['layer']}")
+                return
+            if not state["pending"]:
+                x, y = state["grid"][state["index"]]
+                phase = generate_window_grating_phase(
+                    state["slm_shape"],
+                    (x, y),
+                    state["window_size"],
+                    state["grating_period"],
+                    state["window_shape"],
+                )
+                self._calib_load_phase(phase)
+                state["pending"] = True
+                self.slm2_panel.calib_center_status.setText(f"当前窗口中心: ({x}, {y})")
+                return
+            if frame is None:
+                return
+            roi = state.get("roi")
+            if roi:
+                x1, x2, y1, y2 = roi
+                x0 = max(0, min(x1, x2))
+                x1c = min(frame.shape[1], max(x1, x2))
+                y0 = max(0, min(y1, y2))
+                y1c = min(frame.shape[0], max(y1, y2))
+                region = frame[y0:y1c, x0:x1c]
+            else:
+                region = frame
+            metric = float(np.sum(region))
+            ix = state["index"] % len(state["xs"])
+            iy = state["index"] // len(state["xs"])
+            state["heatmap"][iy, ix] = metric
+            state["index"] += 1
+            state["pending"] = False
+            return
+
+        if state["type"] == "distance":
+            if state["index"] >= len(state["distances"]) and not state["pending"]:
+                results = state["results"]
+                if results:
+                    best = min(results, key=lambda v: v[1])
+                    best_dist = best[0]
+                else:
+                    best_dist = 0.0
+                calib_cfg = self.config.setdefault("slm2", {}).setdefault("calibration", {})
+                distances = calib_cfg.get("distances_mm", [None] * 4)
+                while len(distances) < 4:
+                    distances.append(None)
+                distances[state["layer"] - 1] = float(best_dist)
+                calib_cfg["distances_mm"] = distances
+                self._save_config()
+                self._calib_add_log("distance", state["layer"], f"distance={best_dist:.2f}mm", results)
+                self._calib_timer.stop()
+                self._calib_state = None
+                self.log(f"距离标定完成 L{state['layer']}")
+                return
+            if not state["pending"]:
+                dist = state["distances"][state["index"]]
+                cx = float(self.slm2_panel.calib_dist_cx.value())
+                cy = float(self.slm2_panel.calib_dist_cy.value())
+                slm2_cfg = self.config.get("slm2", {})
+                phase = generate_lens_phase(
+                    state["slm_shape"],
+                    (cx, cy),
+                    dist,
+                    float(slm2_cfg.get("pixel_pitch_um", 8.0)),
+                    float(slm2_cfg.get("wavelength_nm", 532.0)),
+                )
+                window_size = slm2_cfg.get("window_size_px", [400, 400])
+                win_w = float(window_size[0]) if isinstance(window_size, (list, tuple)) else float(window_size)
+                win_h = float(window_size[1]) if isinstance(window_size, (list, tuple)) else float(window_size)
+                half_w = max(win_w / 2.0, 0.0)
+                half_h = max(win_h / 2.0, 0.0)
+                yy, xx = np.mgrid[0:state["slm_shape"][0], 0:state["slm_shape"][1]]
+                mask = (abs(xx - cx) <= half_w) & (abs(yy - cy) <= half_h)
+                phase = np.where(mask, phase, 0.0)
+                self._calib_load_phase(phase)
+                state["pending"] = True
+                self.slm2_panel.calib_dist_status.setText(f"当前距离: {dist:.2f} mm")
+                return
+            if frame is None:
+                return
+            roi = state.get("roi")
+            if roi:
+                x1, x2, y1, y2 = roi
+                x0 = max(0, min(x1, x2))
+                x1c = min(frame.shape[1], max(x1, x2))
+                y0 = max(0, min(y1, y2))
+                y1c = min(frame.shape[0], max(y1, y2))
+                region = frame[y0:y1c, x0:x1c]
+            else:
+                region = frame
+            max_val = float(np.max(region)) if region.size else 0.0
+            if max_val <= 0:
+                diameter = float("inf")
+            else:
+                thresh = max_val * 0.5
+                mask = region >= thresh
+                area = float(np.sum(mask))
+                if area <= 0:
+                    diameter = float("inf")
+                else:
+                    diameter = 2.0 * np.sqrt(area / np.pi)
+            dist = state["distances"][state["index"]]
+            state["results"].append((dist, diameter))
+            state["index"] += 1
+            state["pending"] = False
 
     def _auto_exposure_by_roi(self, frame: np.ndarray) -> None:
         if self._auto_exposure_mode != "software":
@@ -1148,12 +1604,20 @@ class MainWindow(QtWidgets.QMainWindow):
     def on_mouse_moved(self, pos) -> None:
         if self.image_item.image is None:
             return
-        point = self.view_box.mapSceneToView(pos)
-        x, y = int(point.x()), int(point.y())
         img = self.image_item.image
-        if 0 <= x < img.shape[1] and 0 <= y < img.shape[0]:
-            value = img[y, x]
-            self.roi_panel.update_pixel(f"Pixel: ({x}, {y}) = {value:.1f}")
+        if hasattr(self.image_item, "rect"):
+            rect = self.image_item.rect()
+        else:
+            rect = self.image_item.boundingRect()
+        if rect.width() <= 0 or rect.height() <= 0:
+            self.roi_panel.update_pixel("Pixel: -")
+            return
+        local = self.image_item.mapFromScene(pos)
+        x_img = int((local.x() - rect.left()) * img.shape[1] / rect.width())
+        y_img = int((local.y() - rect.top()) * img.shape[0] / rect.height())
+        if 0 <= x_img < img.shape[1] and 0 <= y_img < img.shape[0]:
+            value = img[y_img, x_img]
+            self.roi_panel.update_pixel(f"Pixel: ({x_img}, {y_img}) = {value:.1f}")
         else:
             self.roi_panel.update_pixel("Pixel: -")
 
@@ -1314,7 +1778,7 @@ def main() -> None:
 
     config = load_config(args.config)
     app = QtWidgets.QApplication(sys.argv)
-    window = MainWindow(config, mock=args.mock)
+    window = MainWindow(config, mock=args.mock, config_path=args.config)
     window.resize(1600, 900)
     window.show()
     sys.exit(app.exec())
