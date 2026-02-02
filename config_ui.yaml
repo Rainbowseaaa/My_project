@@ -7,6 +7,8 @@ slm1:
   compensation_path: ""
   play_interval_ms: 500
   sdk_path: ""
+  pixel_pitch_um: 8.0
+  wavelength_nm: 532.0
 
 slm2:
   device_type: "holoeye"  # upo 或 holoeye

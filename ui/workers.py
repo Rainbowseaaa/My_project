@@ -11,6 +11,7 @@ from functions.bolduc_hologram import bolduc_phase_encoding
 from functions.utils import phase_to_uint8
 from ui.phase_utils import (
     apply_compensation,
+    generate_focus_field,
     generate_lg_field,
     load_compensation,
     load_field_file,
@@ -150,6 +151,14 @@ class SLM1Worker(QtCore.QObject):
                     else:
                         amp, phase = render_letter_field(self._slm_shape, field_params.get("letter", "A"))
                     amp, phase = resize_and_embed(amp, phase, self._slm_shape, size)
+                elif field_params.get("mode") == "focus":
+                    amp, phase = generate_focus_field(
+                        self._slm_shape,
+                        field_params.get("focus_mm", 100.0),
+                        field_params.get("diameter_px", 0.0),
+                        field_params.get("pixel_pitch_um", 8.0),
+                        field_params.get("wavelength_nm", 532.0),
+                    )
                 elif field_params.get("mode") in ("mnist", "fashion_mnist"):
                     is_fashion = (field_params.get("mode") == "fashion_mnist")
                     sample = load_mnist_sample(

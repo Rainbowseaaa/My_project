@@ -699,12 +699,17 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         amp_norm_max = float(self.image_panel.amp_norm_spin.value())
 
+        slm1_cfg = self.config.get("slm1", {})
         field_params = {
             "mode": "file" if (
                         load_mode == "file" and input_type == "field") else self.image_panel.field_mode_combo.currentData(),
             "w0": self.image_panel.lg_w0_spin.value(),
             "p": self.image_panel.lg_p_spin.value(),
             "l": self.image_panel.lg_l_spin.value(),
+            "focus_mm": self.image_panel.focus_distance_spin.value(),
+            "diameter_px": self.image_panel.focus_diameter_spin.value(),
+            "pixel_pitch_um": float(slm1_cfg.get("pixel_pitch_um", 8.0)),
+            "wavelength_nm": float(slm1_cfg.get("wavelength_nm", 532.0)),
             "letter": self.image_panel.letter_edit.text().strip(),
             "index": self.image_panel.dataset_index_spin.value(),
             "size": (self.image_panel.field_width_spin.value(), self.image_panel.field_height_spin.value()),

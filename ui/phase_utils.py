@@ -289,6 +289,46 @@ def render_letter_field(shape: Tuple[int, int], letter: str) -> Tuple[np.ndarray
     return amp, phase
 
 
+def generate_focus_field(
+    shape: Tuple[int, int],
+    focus_mm: float,
+    diameter_px: float,
+    pixel_pitch_um: float = 8.0,
+    wavelength_nm: float = 532.0,
+) -> Tuple[np.ndarray, np.ndarray]:
+    height, width = shape
+    focus_mm = float(focus_mm)
+    diameter_px = float(diameter_px)
+    pixel_pitch_um = float(pixel_pitch_um)
+    wavelength_nm = float(wavelength_nm)
+
+    if focus_mm == 0:
+        raise ValueError("focus_mm 不能为 0")
+
+    pitch = pixel_pitch_um * 1e-6
+    wavelength = wavelength_nm * 1e-9
+    f = focus_mm * 1e-3
+
+    yy, xx = np.mgrid[0:height, 0:width]
+    cx = width / 2
+    cy = height / 2
+    dx = xx - cx
+    dy = yy - cy
+    x = dx * pitch
+    y = dy * pitch
+    r2 = x ** 2 + y ** 2
+
+    phase = (-np.pi / (wavelength * f)) * r2
+    if diameter_px > 0:
+        radius_px = diameter_px / 2.0
+        mask = (dx ** 2 + dy ** 2) <= radius_px ** 2
+        amp = mask.astype(np.float64)
+        phase = phase * mask
+    else:
+        amp = np.ones((height, width), dtype=np.float64)
+    return amp, phase
+
+
 def resize_and_embed(
     amp: np.ndarray,
     phase: np.ndarray,

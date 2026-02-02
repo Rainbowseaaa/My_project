@@ -366,6 +366,7 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         # ====== 生成模式区域 ======
         self.field_mode_combo = QtWidgets.QComboBox()
         self.field_mode_combo.addItem("LG 光束", userData="lg")
+        self.field_mode_combo.addItem("聚焦相位", userData="focus")
         self.field_mode_combo.addItem("字母", userData="letter")
         self.field_mode_combo.addItem("MNIST", userData="mnist")
         self.field_mode_combo.addItem("FashionMNIST", userData="fashion_mnist")
@@ -378,6 +379,14 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.lg_l_spin = QtWidgets.QSpinBox()
         self.lg_l_spin.setRange(-200, 200)
         self.letter_edit = QtWidgets.QLineEdit("A")
+        self.focus_distance_spin = QtWidgets.QDoubleSpinBox()
+        self.focus_distance_spin.setRange(-10000.0, 10000.0)
+        self.focus_distance_spin.setValue(245.0)
+        self.focus_distance_spin.setSuffix(" mm")
+        self.focus_diameter_spin = QtWidgets.QDoubleSpinBox()
+        self.focus_diameter_spin.setRange(0.0, 10000.0)
+        self.focus_diameter_spin.setValue(350.0)
+        self.focus_diameter_spin.setSuffix(" px")
         self.dataset_index_spin = QtWidgets.QSpinBox()
         self.dataset_index_spin.setRange(0, 9999)
         self.field_width_spin = QtWidgets.QSpinBox()
@@ -402,8 +411,15 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         mnist_widget = QtWidgets.QWidget()
         mnist_widget.setLayout(mnist_form)
 
+        focus_form = QtWidgets.QFormLayout()
+        focus_form.addRow("焦距", self.focus_distance_spin)
+        focus_form.addRow("光场直径(px)", self.focus_diameter_spin)
+        focus_widget = QtWidgets.QWidget()
+        focus_widget.setLayout(focus_form)
+
         self.field_stack = QtWidgets.QStackedWidget()
         self.field_stack.addWidget(lg_widget)
+        self.field_stack.addWidget(focus_widget)
         self.field_stack.addWidget(letter_widget)
         self.field_stack.addWidget(mnist_widget)
 
@@ -588,6 +604,8 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.lg_w0_spin.valueChanged.connect(self.param_changed)
         self.lg_p_spin.valueChanged.connect(self.param_changed)
         self.lg_l_spin.valueChanged.connect(self.param_changed)
+        self.focus_distance_spin.valueChanged.connect(self.param_changed)
+        self.focus_diameter_spin.valueChanged.connect(self.param_changed)
         self.letter_edit.textChanged.connect(self.param_changed)
         self.dataset_index_spin.valueChanged.connect(self.param_changed)
         self.field_width_spin.valueChanged.connect(self.param_changed)
@@ -639,11 +657,14 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         if mode == "lg":
             index = 0;
             enable_size = False
-        elif mode == "letter":
+        elif mode == "focus":
             index = 1;
+            enable_size = False
+        elif mode == "letter":
+            index = 2;
             enable_size = True
         elif mode in {"mnist", "fashion_mnist"}:
-            index = 2;
+            index = 3;
             enable_size = True
         else:
             index = 0;
