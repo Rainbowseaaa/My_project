@@ -319,7 +319,15 @@ def generate_focus_field(
     wavelength_nm = float(wavelength_nm)
 
     if focus_mm == 0:
-        raise ValueError("focus_mm 不能为 0")
+        amp = np.ones((height, width), dtype=np.float64)
+        if diameter_px > 0:
+            yy, xx = np.mgrid[0:height, 0:width]
+            dx = xx - (width / 2)
+            dy = yy - (height / 2)
+            radius_px = diameter_px / 2.0
+            amp = ((dx ** 2 + dy ** 2) <= radius_px ** 2).astype(np.float64)
+        phase = np.zeros((height, width), dtype=np.float64)
+        return amp, phase
 
     pitch = pixel_pitch_um * 1e-6
     wavelength = wavelength_nm * 1e-9
