@@ -67,6 +67,45 @@ class CameraViewBox(pg.ViewBox):
         super().mouseDragEvent(ev, axis=axis)
 
 
+class AspectRatioContainer(QtWidgets.QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._ratio = None
+        self._child = None
+
+    def set_child(self, widget: QtWidgets.QWidget) -> None:
+        self._child = widget
+        widget.setParent(self)
+        self._apply_geometry()
+
+    def set_ratio(self, ratio: float) -> None:
+        if ratio <= 0:
+            return
+        self._ratio = float(ratio)
+        self._apply_geometry()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_geometry()
+
+    def _apply_geometry(self) -> None:
+        if self._child is None or self._ratio is None:
+            return
+        w = self.width()
+        h = self.height()
+        if w <= 1 or h <= 1:
+            return
+        if w / h >= self._ratio:
+            child_h = h
+            child_w = int(h * self._ratio)
+        else:
+            child_w = w
+            child_h = int(w / self._ratio)
+        x = int((w - child_w) / 2)
+        y = int((h - child_h) / 2)
+        self._child.setGeometry(x, y, child_w, child_h)
+
+
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, config: dict, mock: bool = False) -> None:
         super().__init__()
@@ -206,8 +245,9 @@ class MainWindow(QtWidgets.QMainWindow):
         group = QtWidgets.QGroupBox("相机显示")
         layout = QtWidgets.QVBoxLayout(group)
 
-        self.plot_widget = pg.GraphicsLayoutWidget()
-        self.plot_widget.setMinimumSize(320, 200)
+        self.plot_widget = pg.GraphicsView()
+        self.camera_view_container = AspectRatioContainer()
+        self.camera_view_container.setMinimumSize(320, 200)
         self.camera_toolbar = QtWidgets.QHBoxLayout()
         self.camera_toolbar.setContentsMargins(0, 0, 0, 0)
         self.camera_mode_button = QtWidgets.QToolButton()
@@ -229,7 +269,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.camera_toolbar.addWidget(self.camera_reset_button)
         layout.addLayout(self.camera_toolbar)
         self.view_box = CameraViewBox()
-        self.plot_widget.addItem(self.view_box)
+        self.view_box.setAspectLocked(True)
+        if hasattr(self.view_box, "setDefaultPadding"):
+            self.view_box.setDefaultPadding(0.0)
+        self.view_box.enableAutoRange(False, False)
+        self.plot_widget.setCentralItem(self.view_box)
         self._pan_mode = getattr(getattr(pg.ViewBox, "MouseMode", None), "PanMode", None)
         if self._pan_mode is None:
             self._pan_mode = getattr(pg.ViewBox, "PanMode", None)
@@ -259,7 +303,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.plot_widget.scene().sigMouseMoved.connect(self.on_mouse_moved)
 
-        layout.addWidget(self.plot_widget)
+        self.camera_view_container.set_child(self.plot_widget)
+        layout.addWidget(self.camera_view_container)
         return group
 
     def _build_left_split(self) -> QtWidgets.QWidget:
@@ -841,12 +886,14 @@ class MainWindow(QtWidgets.QMainWindow):
         frame_shape = (int(frame.shape[0]), int(frame.shape[1]))
         if self._camera_frame_shape != frame_shape:
             self._camera_frame_shape = frame_shape
-            rect = QtCore.QRectF(0, 0, frame.shape[1], frame.shape[0])
+            rect = QtCore.QRectF(0, 0, frame.shape[1], frame.shape[1])
             self.image_item.setRect(rect)
-            self.view_box.setRange(rect, padding=0.02)
+            self.view_box.setRange(rect, padding=0.0)
+            self.camera_view_container.set_ratio(frame.shape[1] / frame.shape[0])
             self._camera_view_mode = "full"
         if self._camera_view_mode == "full":
             self.view_box.setAspectLocked(True, ratio=frame.shape[1] / frame.shape[0])
+            self.camera_view_container.set_ratio(frame.shape[1] / frame.shape[0])
         self.status_panel.update_status(fps=fps)
         self._check_overexposure(frame)
         self._auto_exposure_by_roi(frame)
@@ -949,9 +996,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.view_box.autoRange()
             return
         img = self.image_item.image
-        rect = QtCore.QRectF(0, 0, img.shape[1], img.shape[0])
+        rect = QtCore.QRectF(0, 0, img.shape[1], img.shape[1])
         self.view_box.setRange(rect, padding=0.05)
         self.view_box.setAspectLocked(True, ratio=img.shape[1] / img.shape[0])
+        self.camera_view_container.set_ratio(img.shape[1] / img.shape[0])
         self._camera_view_mode = "full"
 
     def zoom_to_roi(self) -> None:
@@ -961,7 +1009,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if roi_bounds.width() <= 1 or roi_bounds.height() <= 1:
             return
         self.view_box.setRange(roi_bounds, padding=0.05)
-        self.view_box.setAspectLocked(True, ratio=roi_bounds.width() / roi_bounds.height())
+        if self._camera_frame_shape is not None:
+            ratio = self._camera_frame_shape[1] / self._camera_frame_shape[0]
+        else:
+            ratio = roi_bounds.width() / roi_bounds.height()
+        self.view_box.setAspectLocked(True, ratio=ratio)
+        self.camera_view_container.set_ratio(ratio)
         self._camera_view_mode = "roi"
 
     def on_camera_mode_changed(self) -> None:
