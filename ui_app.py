@@ -93,6 +93,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._camera_frame_shape: Optional[tuple[int, int]] = None
         self._camera_view_mode = "full"
         self._heds_inited = False
+        self._auto_exposure_last_time = 0.0
+        cam_cfg = self.config.get("camera", {})
+        self._auto_exposure_mode = str(cam_cfg.get("auto_exposure_mode", "software")).lower()
+        self._auto_exposure_target = float(cam_cfg.get("auto_exposure_target", 120.0))
+        self._auto_exposure_interval = float(cam_cfg.get("auto_exposure_interval_ms", 200)) / 1000.0
+        self._auto_exposure_min_ratio = float(cam_cfg.get("auto_exposure_min_ratio", 0.5))
+        self._auto_exposure_max_ratio = float(cam_cfg.get("auto_exposure_max_ratio", 2.0))
+        self._auto_exposure_tolerance = float(cam_cfg.get("auto_exposure_tolerance", 0.02))
 
         self._setup_ui()
         self._setup_threads()
@@ -841,6 +849,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.view_box.setAspectLocked(True, ratio=frame.shape[1] / frame.shape[0])
         self.status_panel.update_status(fps=fps)
         self._check_overexposure(frame)
+        self._auto_exposure_by_roi(frame)
         if self.recording and self.record_dir:
             now = time.time()
             interval_s = self.camera_control.record_interval_spin.value() / 1000.0
@@ -854,6 +863,55 @@ class MainWindow(QtWidgets.QMainWindow):
                     Image.fromarray(img).save(path)
                 self.last_record_time = now
         self.update_roi_stats()
+
+    def _auto_exposure_by_roi(self, frame: np.ndarray) -> None:
+        if self._auto_exposure_mode != "software":
+            return
+        if not self.camera_control.auto_exposure_checkbox.isChecked():
+            return
+        if self.camera_worker is None:
+            return
+        now = time.time()
+        if now - self._auto_exposure_last_time < self._auto_exposure_interval:
+            return
+
+        roi = self._extract_roi(frame)
+        if roi is None or roi.size == 0:
+            return
+        mean = float(np.mean(roi))
+        if mean <= 1e-6:
+            return
+
+        target = self._auto_exposure_target
+        ratio = target / mean
+        ratio = min(max(ratio, self._auto_exposure_min_ratio), self._auto_exposure_max_ratio)
+
+        current = float(self.camera_control.exposure_spin.value())
+        new_exposure = current * ratio
+        min_exp = float(self.camera_control.exposure_spin.minimum())
+        max_exp = float(self.camera_control.exposure_spin.maximum())
+        new_exposure = min(max(new_exposure, min_exp), max_exp)
+
+        if current > 0:
+            if abs(new_exposure - current) / current < self._auto_exposure_tolerance:
+                return
+
+        self.camera_control.exposure_spin.setValue(new_exposure)
+        self._send_exposure(new_exposure, log=False)
+        self._auto_exposure_last_time = now
+
+    def _extract_roi(self, frame: np.ndarray) -> Optional[np.ndarray]:
+        try:
+            roi_bounds = self.roi.parentBounds()
+        except Exception:
+            return frame
+        x0 = max(int(roi_bounds.left()), 0)
+        y0 = max(int(roi_bounds.top()), 0)
+        x1 = min(int(roi_bounds.right()), frame.shape[1] - 1)
+        y1 = min(int(roi_bounds.bottom()), frame.shape[0] - 1)
+        if x1 <= x0 or y1 <= y0:
+            return None
+        return frame[y0:y1, x0:x1]
 
     def update_roi_stats(self) -> None:
         if self.image_item.image is None:
@@ -1053,19 +1111,36 @@ class MainWindow(QtWidgets.QMainWindow):
             self.log("相机未初始化，无法设置曝光")
             return
         auto_exposure = self.camera_control.auto_exposure_checkbox.isChecked()
-        if hasattr(self.camera_worker, "enqueue_auto_exposure"):
-            self.camera_worker.enqueue_auto_exposure(auto_exposure)
-        else:
-            QtCore.QMetaObject.invokeMethod(
-                self.camera_worker,
-                "set_auto_exposure",
-                QtCore.Qt.ConnectionType.QueuedConnection,
-                QtCore.Q_ARG(bool, auto_exposure),
-            )
         if auto_exposure:
-            self.log("设置自动曝光: ON")
+            if self._auto_exposure_mode == "camera":
+                if hasattr(self.camera_worker, "enqueue_auto_exposure"):
+                    self.camera_worker.enqueue_auto_exposure(True)
+                else:
+                    QtCore.QMetaObject.invokeMethod(
+                        self.camera_worker,
+                        "set_auto_exposure",
+                        QtCore.Qt.ConnectionType.QueuedConnection,
+                        QtCore.Q_ARG(bool, True),
+                    )
+                self.log("设置自动曝光: 相机")
+            else:
+                if hasattr(self.camera_worker, "enqueue_auto_exposure"):
+                    self.camera_worker.enqueue_auto_exposure(False)
+                else:
+                    QtCore.QMetaObject.invokeMethod(
+                        self.camera_worker,
+                        "set_auto_exposure",
+                        QtCore.Qt.ConnectionType.QueuedConnection,
+                        QtCore.Q_ARG(bool, False),
+                    )
+                self.log("设置自动曝光: ROI")
             return
         exposure_us = self.camera_control.exposure_spin.value()
+        self._send_exposure(exposure_us, log=True)
+
+    def _send_exposure(self, exposure_us: float, log: bool = False) -> None:
+        if self.camera_worker is None:
+            return
         if hasattr(self.camera_worker, "enqueue_exposure"):
             self.camera_worker.enqueue_exposure(exposure_us)
         else:
@@ -1073,9 +1148,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.camera_worker,
                 "set_exposure",
                 QtCore.Qt.ConnectionType.QueuedConnection,
-                QtCore.Q_ARG(float, exposure_us),
+                QtCore.Q_ARG(float, float(exposure_us)),
             )
-        self.log(f"设置曝光: {exposure_us:.0f} us")
+        if log:
+            self.log(f"设置曝光: {exposure_us:.0f} us")
 
     def _refresh_heds_devices(self) -> None:
         devices = self._detect_holoeye_devices()
