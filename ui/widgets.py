@@ -495,6 +495,8 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.slm1_comp_checkbox = QtWidgets.QCheckBox("叠加补偿")
         self.slm1_comp_edit = QtWidgets.QLineEdit()
         self.slm1_comp_button = QtWidgets.QPushButton("...")
+        self.slm1_comp_flip_h = QtWidgets.QCheckBox("补偿H翻转")
+        self.slm1_comp_flip_v = QtWidgets.QCheckBox("补偿V翻转")
         self.auto_apply_checkbox = QtWidgets.QCheckBox("Auto Apply")
 
         self.flip_h_checkbox = QtWidgets.QCheckBox("H翻转")
@@ -504,6 +506,8 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         trans_layout.addWidget(self.flip_h_checkbox)
         trans_layout.addWidget(self.flip_v_checkbox)
         trans_layout.addWidget(self.slm1_comp_checkbox)
+        trans_layout.addWidget(self.slm1_comp_flip_h)
+        trans_layout.addWidget(self.slm1_comp_flip_v)
         trans_layout.addWidget(self.slm1_comp_edit, 1)
         trans_layout.addWidget(self.slm1_comp_button)
 
@@ -615,6 +619,8 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.flip_h_checkbox.stateChanged.connect(self.param_changed)
         self.flip_v_checkbox.stateChanged.connect(self.param_changed)
         self.slm1_comp_checkbox.stateChanged.connect(self.param_changed)
+        self.slm1_comp_flip_h.stateChanged.connect(self.param_changed)
+        self.slm1_comp_flip_v.stateChanged.connect(self.param_changed)
         self.slm1_comp_edit.textChanged.connect(self.param_changed)
 
     def _pick_image(self) -> None:

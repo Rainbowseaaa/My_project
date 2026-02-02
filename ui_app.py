@@ -703,6 +703,8 @@ class MainWindow(QtWidgets.QMainWindow):
             path = ""
         use_comp = self.image_panel.slm1_comp_checkbox.isChecked()
         comp_path = self.image_panel.slm1_comp_edit.text().strip()
+        comp_flip_h = self.image_panel.slm1_comp_flip_h.isChecked()
+        comp_flip_v = self.image_panel.slm1_comp_flip_v.isChecked()
 
         flip_h = self.image_panel.flip_h_checkbox.isChecked()
         flip_v = self.image_panel.flip_v_checkbox.isChecked()
@@ -727,6 +729,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "index": self.image_panel.dataset_index_spin.value(),
             "size": (self.image_panel.field_width_spin.value(), self.image_panel.field_height_spin.value()),
             "data_dir": self.config.get("datasets", {}).get("mnist_dir", "data/mnist"),
+            "comp_flip_h": comp_flip_h,
+            "comp_flip_v": comp_flip_v,
         }
 
         QtCore.QMetaObject.invokeMethod(

@@ -194,6 +194,10 @@ class SLM1Worker(QtCore.QObject):
                 comp = load_compensation(comp_path, hologram_u8.shape, meaning="encoded_0_255")
                 if comp is not None:
                     comp_u8 = phase_to_uint8(comp)
+                    if field_params.get("comp_flip_h"):
+                        comp_u8 = np.fliplr(comp_u8)
+                    if field_params.get("comp_flip_v"):
+                        comp_u8 = np.flipud(comp_u8)
                     hologram_u8 = ((hologram_u8.astype(np.uint16) + comp_u8.astype(np.uint16)) % 256).astype(np.uint8)
 
             self._slm.display_gray(hologram_u8, use_comp=False)
