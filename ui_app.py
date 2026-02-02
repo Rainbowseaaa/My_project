@@ -162,6 +162,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.run_button = QtWidgets.QPushButton("Run 全流程")
         self.stop_button = QtWidgets.QPushButton("Stop 全流程")
+        self.run_button.setMinimumHeight(24)
+        self.run_button.setMaximumHeight(28)
+        self.run_button.setMinimumWidth(90)
+        self.stop_button.setMinimumHeight(24)
+        self.stop_button.setMaximumHeight(28)
+        self.stop_button.setMinimumWidth(90)
         self.save_button = QtWidgets.QPushButton("保存当前帧")
         self.record_button = QtWidgets.QPushButton("开始连续保存")
         self.stop_record_button = QtWidgets.QPushButton("停止连续保存")
@@ -197,6 +203,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.slm2_panel.stop_button.clicked.connect(self.stop_slm2)
         self.slm2_panel.slm2_comp_checkbox.stateChanged.connect(self.on_layer_change)
         self.slm2_panel.slm2_comp_edit.textChanged.connect(self.on_layer_change)
+        self.slm2_panel.slm2_comp_flip_h.stateChanged.connect(self.on_layer_change)
+        self.slm2_panel.slm2_comp_flip_v.stateChanged.connect(self.on_layer_change)
         self.slm2_panel.auto_apply_checkbox.stateChanged.connect(self.on_layer_change)
 
         self.run_button.clicked.connect(self.run_all)
@@ -226,6 +234,7 @@ class MainWindow(QtWidgets.QMainWindow):
         right_layout.addWidget(self.save_button)
         right_layout.addWidget(self.record_button)
         right_layout.addWidget(self.stop_record_button)
+        right_layout.addWidget(self.status_panel)
 
         main_layout = QtWidgets.QHBoxLayout()
         main_layout.addLayout(left_layout, 1)
@@ -233,13 +242,17 @@ class MainWindow(QtWidgets.QMainWindow):
         main_layout.addLayout(right_layout, 1)
 
         bottom_layout = QtWidgets.QHBoxLayout()
+        bottom_layout.setContentsMargins(0, 0, 0, 0)
+        bottom_layout.setSpacing(6)
         bottom_layout.addWidget(self.run_button)
         bottom_layout.addWidget(self.stop_button)
-        bottom_layout.addWidget(self.status_panel)
+        bottom_layout.addStretch(1)
 
         wrapper = QtWidgets.QVBoxLayout(central)
         wrapper.addLayout(main_layout)
         wrapper.addLayout(bottom_layout)
+        wrapper.setStretch(0, 1)
+        wrapper.setStretch(1, 0)
 
     def _build_camera_view(self) -> QtWidgets.QGroupBox:
         group = QtWidgets.QGroupBox("相机显示")
@@ -761,9 +774,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
         use_comp = self.slm2_panel.slm2_comp_checkbox.isChecked()
         comp_path = self.slm2_panel.slm2_comp_edit.text().strip()
+        comp_flip_h = self.slm2_panel.slm2_comp_flip_h.isChecked()
+        comp_flip_v = self.slm2_panel.slm2_comp_flip_v.isChecked()
         preview_phase = phase
         if use_comp and comp_path:
             comp = load_compensation(comp_path, phase.shape, meaning="encoded_0_255")
+            if comp is not None:
+                if comp_flip_h:
+                    comp = np.fliplr(comp)
+                if comp_flip_v:
+                    comp = np.flipud(comp)
             preview_phase = apply_compensation(phase, comp)
         self._latest_slm2_loaded_phase = preview_phase
 
@@ -774,6 +794,8 @@ class MainWindow(QtWidgets.QMainWindow):
             QtCore.Q_ARG(object, phase),
             QtCore.Q_ARG(bool, use_comp),
             QtCore.Q_ARG(str, comp_path),
+            QtCore.Q_ARG(bool, comp_flip_h),
+            QtCore.Q_ARG(bool, comp_flip_v),
         )
         self.update_preview()
 

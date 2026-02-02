@@ -216,11 +216,16 @@ class SLM2Worker(QtCore.QObject):
         self._slm = controller
         self._slm_shape = slm_shape
 
-    @QtCore.pyqtSlot(object, bool, str)
-    def load_phase(self, phase: np.ndarray, use_comp: bool, comp_path: str) -> None:
+    @QtCore.pyqtSlot(object, bool, str, bool, bool)
+    def load_phase(self, phase: np.ndarray, use_comp: bool, comp_path: str, comp_flip_h: bool, comp_flip_v: bool) -> None:
         try:
             if use_comp and comp_path:
                 comp = load_compensation(comp_path, phase.shape, meaning="encoded_0_255")
+                if comp is not None:
+                    if comp_flip_h:
+                        comp = np.fliplr(comp)
+                    if comp_flip_v:
+                        comp = np.flipud(comp)
                 phase = apply_compensation(phase, comp)
             self._slm.display_phase(phase, use_comp=False)
             returned = getattr(self._slm, "last_phase", None)

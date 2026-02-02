@@ -695,6 +695,8 @@ class SLM2Panel(QtWidgets.QGroupBox):
         self.slm2_comp_checkbox = QtWidgets.QCheckBox("叠加补偿")
         self.slm2_comp_edit = QtWidgets.QLineEdit()
         self.slm2_comp_button = QtWidgets.QPushButton("...")
+        self.slm2_comp_flip_h = QtWidgets.QCheckBox("补偿H翻转")
+        self.slm2_comp_flip_v = QtWidgets.QCheckBox("补偿V翻转")
 
         self.global_flip_h = QtWidgets.QCheckBox("全局H翻转")
         self.global_flip_v = QtWidgets.QCheckBox("全局V翻转")
@@ -704,10 +706,12 @@ class SLM2Panel(QtWidgets.QGroupBox):
         comp_layout.addWidget(self.slm2_comp_edit, 1)
         comp_layout.addWidget(self.slm2_comp_button)
 
-        global_flip_layout = QtWidgets.QHBoxLayout()
-        global_flip_layout.addWidget(self.global_flip_h)
-        global_flip_layout.addWidget(self.global_flip_v)
-        global_flip_layout.addStretch(1)
+        flip_layout = QtWidgets.QHBoxLayout()
+        flip_layout.addWidget(self.global_flip_h)
+        flip_layout.addWidget(self.global_flip_v)
+        flip_layout.addWidget(self.slm2_comp_flip_h)
+        flip_layout.addWidget(self.slm2_comp_flip_v)
+        flip_layout.addStretch(1)
 
         layout = QtWidgets.QVBoxLayout()
         layout.addWidget(QtWidgets.QLabel("SLM2 类型"))
@@ -725,7 +729,7 @@ class SLM2Panel(QtWidgets.QGroupBox):
         for widget in self.layer_widgets:
             layout.addWidget(widget)
         layout.addLayout(comp_layout)
-        layout.addLayout(global_flip_layout)
+        layout.addLayout(flip_layout)
         layout.addWidget(self.auto_apply_checkbox)
         layout.addWidget(self.apply_button)
 
