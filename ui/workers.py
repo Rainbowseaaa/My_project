@@ -141,8 +141,8 @@ class SLM1Worker(QtCore.QObject):
                     amp, phase = generate_lg_field(
                         self._slm_shape,
                         float(field_params.get("w0", 80.0)),
-                        int(field_params.get("p", 0)),
-                        int(field_params.get("l", 0)),
+                        field_params.get("p", 0),
+                        field_params.get("l", 0),
                     )
                 elif field_params.get("mode") == "letter":
                     size = field_params.get("size")
@@ -172,6 +172,9 @@ class SLM1Worker(QtCore.QObject):
                     amp, phase = resize_and_embed(amp, phase, self._slm_shape, size)
                 else:
                     amp, phase = load_field_file(image_path, self._slm_shape)
+                    size = field_params.get("size")
+                    if size and size[0] > 0 and size[1] > 0:
+                        amp, phase = resize_and_embed(amp, phase, self._slm_shape, size)
 
                 amp_max = float(np.max(amp)) if amp.size else 0.0
                 if amp_max > 0:

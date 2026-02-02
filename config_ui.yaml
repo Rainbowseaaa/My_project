@@ -12,7 +12,7 @@ slm1:
 
 slm2:
   device_type: "holoeye"  # upo 或 holoeye
-  compensation_path: ""
+  compensation_path: "Holoeye_phase_correct_8bit.bmp"
   sdk_path: ""
   screen_num: 2
   heds_selector: ""
@@ -20,10 +20,10 @@ slm2:
   outside_mode: "zero"
   window_size_px: [400, 400]
   default_centers:
-    - [240, 540]
-    - [720, 540]
-    - [1200, 540]
     - [1680, 540]
+    - [1200, 540]
+    - [720, 540]
+    - [240, 540]
   layers:
     - {path: "", dx: 0, dy: 0, enabled: true}
     - {path: "", dx: 0, dy: 0, enabled: true}

@@ -245,7 +245,16 @@ def load_field_file(path: str, shape: Tuple[int, int]) -> Tuple[np.ndarray, np.n
     return amp, phase
 
 
-def generate_lg_field(shape: Tuple[int, int], w0: float, p: int, l: int) -> Tuple[np.ndarray, np.ndarray]:
+def _parse_int_list(value) -> List[int]:
+    if isinstance(value, (list, tuple)):
+        return [int(v) for v in value]
+    if isinstance(value, str):
+        items = [v.strip() for v in value.split(",") if v.strip()]
+        return [int(v) for v in items] if items else []
+    return [int(value)]
+
+
+def generate_lg_field(shape: Tuple[int, int], w0: float, p, l) -> Tuple[np.ndarray, np.ndarray]:
     from functions import OAM_gen
 
     height, width = shape
@@ -259,7 +268,14 @@ def generate_lg_field(shape: Tuple[int, int], w0: float, p: int, l: int) -> Tupl
     w0_px = max(float(w0), 1e-6)
     wavelength = 1.0
     zR = np.pi * w0_px ** 2 / wavelength
-    field = OAM_gen.LG_beam(r, phi, wavelength, w0_px, zR, 0.0, [int(l)], [int(p)], norm=True)
+    p_list = _parse_int_list(p)
+    l_list = _parse_int_list(l)
+    if len(p_list) != len(l_list):
+        raise ValueError("LG 模式: p 与 l 数量不一致")
+    if not p_list:
+        p_list = [0]
+        l_list = [0]
+    field = OAM_gen.LG_beam(r, phi, wavelength, w0_px, zR, 0.0, l_list, p_list, norm=True)
     amp = np.abs(field).astype(np.float64)
     phase = np.angle(field).astype(np.float64)
     return amp, phase

@@ -471,6 +471,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.image_panel.slm1_comp_edit.setText(slm1_comp)
         if slm2_comp:
             self.slm2_panel.slm2_comp_edit.setText(slm2_comp)
+            self.slm2_panel.slm2_comp_checkbox.setChecked(True)
         slm1_index = self.image_panel.device_combo.findData(slm1_type)
         if slm1_index >= 0:
             self.image_panel.device_combo.setCurrentIndex(slm1_index)
@@ -719,8 +720,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "mode": "file" if (
                         load_mode == "file" and input_type == "field") else self.image_panel.field_mode_combo.currentData(),
             "w0": self.image_panel.lg_w0_spin.value(),
-            "p": self.image_panel.lg_p_spin.value(),
-            "l": self.image_panel.lg_l_spin.value(),
+            "p": self.image_panel.lg_p_edit.text(),
+            "l": self.image_panel.lg_l_edit.text(),
             "focus_mm": self.image_panel.focus_distance_spin.value(),
             "diameter_px": self.image_panel.focus_diameter_spin.value(),
             "pixel_pitch_um": float(slm1_cfg.get("pixel_pitch_um", 8.0)),
@@ -875,6 +876,29 @@ class MainWindow(QtWidgets.QMainWindow):
             slm2_type = self.slm2_panel.device_combo.currentData() or self.config.get("slm2", {}).get("device_type",
                                                                                                       "holoeye")
             slm2_shape = self._slm_shape_for_type(slm2_type)
+        if self.slm2_panel.global_flip_h.isChecked() or self.slm2_panel.global_flip_v.isChecked():
+            height, width = slm2_shape
+            flip_h = self.slm2_panel.global_flip_h.isChecked()
+            flip_v = self.slm2_panel.global_flip_v.isChecked()
+            rects = [
+                (
+                    (width - (left + w)) if flip_h else left,
+                    (height - (top + h)) if flip_v else top,
+                    w,
+                    h,
+                )
+                if rect != (0, 0, 0, 0)
+                else rect
+                for rect in rects
+                for left, top, w, h in [rect]
+            ]
+            centers = [
+                (
+                    (width - cx) if flip_h else cx,
+                    (height - cy) if flip_v else cy,
+                )
+                for cx, cy in centers
+            ]
         mode = self.preview_panel.display_mode()
         base_phase = None
         if mode == "returned":

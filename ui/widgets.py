@@ -374,10 +374,8 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.lg_w0_spin = QtWidgets.QDoubleSpinBox()
         self.lg_w0_spin.setRange(1.0, 1000.0)
         self.lg_w0_spin.setValue(80.0)
-        self.lg_p_spin = QtWidgets.QSpinBox()
-        self.lg_p_spin.setRange(0, 200)
-        self.lg_l_spin = QtWidgets.QSpinBox()
-        self.lg_l_spin.setRange(-200, 200)
+        self.lg_p_edit = QtWidgets.QLineEdit("0")
+        self.lg_l_edit = QtWidgets.QLineEdit("0")
         self.letter_edit = QtWidgets.QLineEdit("A")
         self.focus_distance_spin = QtWidgets.QDoubleSpinBox()
         self.focus_distance_spin.setRange(-10000.0, 10000.0)
@@ -393,11 +391,12 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.field_width_spin.setRange(0, 4000)
         self.field_height_spin = QtWidgets.QSpinBox()
         self.field_height_spin.setRange(0, 4000)
+        self._field_size_enabled = False
 
         lg_form = QtWidgets.QFormLayout()
         lg_form.addRow("LG w0", self.lg_w0_spin)
-        lg_form.addRow("LG p", self.lg_p_spin)
-        lg_form.addRow("LG l", self.lg_l_spin)
+        lg_form.addRow("LG p(逗号)", self.lg_p_edit)
+        lg_form.addRow("LG l(逗号)", self.lg_l_edit)
         lg_widget = QtWidgets.QWidget()
         lg_widget.setLayout(lg_form)
 
@@ -426,12 +425,6 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         gen_layout = QtWidgets.QVBoxLayout()
         gen_layout.addWidget(self.field_mode_combo)
         gen_layout.addWidget(self.field_stack)
-        size_layout = QtWidgets.QHBoxLayout()
-        size_layout.addWidget(QtWidgets.QLabel("Size:"))
-        size_layout.addWidget(self.field_width_spin)
-        size_layout.addWidget(QtWidgets.QLabel("x"))
-        size_layout.addWidget(self.field_height_spin)
-        gen_layout.addLayout(size_layout)
         gen_widget = QtWidgets.QWidget()
         gen_widget.setLayout(gen_layout)
 
@@ -439,6 +432,14 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.load_stack = QtWidgets.QStackedWidget()
         self.load_stack.addWidget(file_widget)
         self.load_stack.addWidget(gen_widget)
+
+        size_layout = QtWidgets.QHBoxLayout()
+        size_layout.addWidget(QtWidgets.QLabel("Size:"))
+        size_layout.addWidget(self.field_width_spin)
+        size_layout.addWidget(QtWidgets.QLabel("x"))
+        size_layout.addWidget(self.field_height_spin)
+        self.size_widget = QtWidgets.QWidget()
+        self.size_widget.setLayout(size_layout)
 
         # --- Hologram params ---
         self.period_spin = QtWidgets.QSpinBox()
@@ -536,6 +537,7 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         source_header.addWidget(self.auto_apply_checkbox)
         main_layout.addLayout(source_header)
         main_layout.addWidget(self.load_stack)
+        main_layout.addWidget(self.size_widget)
 
         hologram_layout = QtWidgets.QHBoxLayout()
         hologram_layout.addWidget(QtWidgets.QLabel("光栅周期(±)"))
@@ -557,6 +559,7 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.folder_button.clicked.connect(self._pick_folder)
         self.slm1_comp_button.clicked.connect(self._pick_slm1_comp)
         self.load_mode_combo.currentIndexChanged.connect(self._update_load_mode)
+        self.input_type_combo.currentIndexChanged.connect(self._update_size_ui)
         self.play_mode_combo.currentIndexChanged.connect(self._update_play_mode)
         self.field_mode_combo.currentIndexChanged.connect(self._update_field_mode)
         self.file_source_type_combo.currentIndexChanged.connect(self._update_file_source_ui)
@@ -568,6 +571,7 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self._update_play_mode()
         self._update_field_mode()
         self._update_file_source_ui()
+        self._update_size_ui()
         self._update_device_ui()
 
     def _populate_screen_combo(self, combo: QtWidgets.QComboBox) -> None:
@@ -606,8 +610,8 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         self.image_edit.textChanged.connect(self.param_changed)
         self.field_mode_combo.currentIndexChanged.connect(self.param_changed)
         self.lg_w0_spin.valueChanged.connect(self.param_changed)
-        self.lg_p_spin.valueChanged.connect(self.param_changed)
-        self.lg_l_spin.valueChanged.connect(self.param_changed)
+        self.lg_p_edit.textChanged.connect(self.param_changed)
+        self.lg_l_edit.textChanged.connect(self.param_changed)
         self.focus_distance_spin.valueChanged.connect(self.param_changed)
         self.focus_diameter_spin.valueChanged.connect(self.param_changed)
         self.letter_edit.textChanged.connect(self.param_changed)
@@ -641,6 +645,7 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
     def _update_load_mode(self) -> None:
         index = 0 if self.load_mode_combo.currentData() == "file" else 1
         self.load_stack.setCurrentIndex(index)
+        self._update_size_ui()
 
     def _update_file_source_ui(self) -> None:
         is_folder = (self.file_source_type_combo.currentData() == "folder")
@@ -675,9 +680,20 @@ class ImageSourcePanel(QtWidgets.QGroupBox):
         else:
             index = 0;
             enable_size = False
+        self._field_size_enabled = enable_size
         self.field_stack.setCurrentIndex(index)
-        self.field_width_spin.setEnabled(enable_size)
-        self.field_height_spin.setEnabled(enable_size)
+        self._update_size_ui()
+
+    def _update_size_ui(self) -> None:
+        load_mode = self.load_mode_combo.currentData()
+        input_type = self.input_type_combo.currentData()
+        if load_mode == "file":
+            visible = (input_type == "field")
+        else:
+            visible = self._field_size_enabled
+        self.size_widget.setVisible(visible)
+        self.field_width_spin.setEnabled(visible)
+        self.field_height_spin.setEnabled(visible)
 
 
 class SLM2Panel(QtWidgets.QGroupBox):
