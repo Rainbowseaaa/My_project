@@ -228,6 +228,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.slm2_panel.calib_dist_stop.clicked.connect(self.stop_calibration)
         self.slm2_panel.calib_dist_pause.clicked.connect(self.pause_calibration)
         self.slm2_panel.calib_dist_resume.clicked.connect(self.resume_calibration)
+        self.slm2_panel.calib_restore_button.clicked.connect(self.restore_calibration_phase)
         self.slm2_panel.calib_log_list.itemClicked.connect(self.on_calib_log_clicked)
         self.slm2_panel.calib_layer_center_combo.currentIndexChanged.connect(self._sync_calib_center_from_layer)
         self.slm2_panel.calib_layer_distance_combo.currentIndexChanged.connect(self._sync_calib_distance_from_layer)
@@ -1126,24 +1127,22 @@ class MainWindow(QtWidgets.QMainWindow):
         slm2_type = self.slm2_panel.device_combo.currentData() or self.config.get("slm2", {}).get("device_type", "holoeye")
         return self._slm_shape_for_type(slm2_type)
 
-    def _calib_load_phase(self, phase: np.ndarray) -> None:
-        use_comp = False
-        comp_path = ""
-        comp_flip_h = False
-        comp_flip_v = False
-        if self._calib_state:
-            use_comp = bool(self._calib_state.get("use_comp", False))
-            comp_path = str(self._calib_state.get("comp_path", ""))
-            comp_flip_h = bool(self._calib_state.get("comp_flip_h", False))
-            comp_flip_v = bool(self._calib_state.get("comp_flip_v", False))
-            if use_comp and comp_path:
-                comp = load_compensation(comp_path, phase.shape, meaning="encoded_0_255")
-                if comp is not None:
-                    if comp_flip_h:
-                        comp = np.fliplr(comp)
-                    if comp_flip_v:
-                        comp = np.flipud(comp)
-                    phase = apply_compensation(phase, comp)
+    def _load_slm2_phase(
+        self,
+        phase: np.ndarray,
+        use_comp: bool = False,
+        comp_path: str = "",
+        comp_flip_h: bool = False,
+        comp_flip_v: bool = False,
+    ) -> None:
+        if use_comp and comp_path:
+            comp = load_compensation(comp_path, phase.shape, meaning="encoded_0_255")
+            if comp is not None:
+                if comp_flip_h:
+                    comp = np.fliplr(comp)
+                if comp_flip_v:
+                    comp = np.flipud(comp)
+                phase = apply_compensation(phase, comp)
         self._latest_slm2_loaded_phase = phase
         if self.slm2_worker is not None:
             QtCore.QMetaObject.invokeMethod(
@@ -1157,6 +1156,34 @@ class MainWindow(QtWidgets.QMainWindow):
                 QtCore.Q_ARG(bool, False),
             )
         self.update_preview()
+
+    def _calib_load_phase(self, phase: np.ndarray) -> None:
+        use_comp = False
+        comp_path = ""
+        comp_flip_h = False
+        comp_flip_v = False
+        if self._calib_state:
+            use_comp = bool(self._calib_state.get("use_comp", False))
+            comp_path = str(self._calib_state.get("comp_path", ""))
+            comp_flip_h = bool(self._calib_state.get("comp_flip_h", False))
+            comp_flip_v = bool(self._calib_state.get("comp_flip_v", False))
+        self._load_slm2_phase(phase, use_comp, comp_path, comp_flip_h, comp_flip_v)
+
+    def restore_calibration_phase(self) -> None:
+        if self.slm2_worker is None:
+            self.log("SLM2 未初始化，请先 Run")
+            return
+        slm_shape = self._calib_prepare_slm2_shape()
+        phase = np.zeros(slm_shape, dtype=np.float64)
+        use_comp = bool(
+            self.slm2_panel.calib_comp_checkbox.isChecked()
+            or self.slm2_panel.calib_dist_comp_checkbox.isChecked()
+        )
+        comp_path = self.slm2_panel.slm2_comp_edit.text().strip()
+        comp_flip_h = self.slm2_panel.slm2_comp_flip_h.isChecked()
+        comp_flip_v = self.slm2_panel.slm2_comp_flip_v.isChecked()
+        self._load_slm2_phase(phase, use_comp, comp_path, comp_flip_h, comp_flip_v)
+        self.log("已恢复 SLM2 标定相位")
 
     def start_center_calibration(self) -> None:
         if self.camera_worker is None or self.slm2_worker is None:
@@ -1223,11 +1250,17 @@ class MainWindow(QtWidgets.QMainWindow):
         init_d = float(self.slm2_panel.calib_dist_init.value())
         r = float(self.slm2_panel.calib_dist_range.value())
         step = float(self.slm2_panel.calib_dist_step.value())
-        values = []
-        d = init_d - r
-        while d <= init_d + r + 1e-6:
-            values.append(d)
-            d += step
+        if step <= 0:
+            self.log("扫描步长必须大于 0")
+            return
+        if r <= 0:
+            values = [init_d]
+        else:
+            values = []
+            d = init_d - r
+            while d <= init_d + r + 1e-6:
+                values.append(d)
+                d += step
         self._calib_state = {
             "type": "distance",
             "layer": layer,
